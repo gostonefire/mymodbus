@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     port.write_all(&request)?;
     port.flush()?;
 
-    let response = read_modbus_rtu_response(&mut *port, Duration::from_millis(500))?;
+    let response = read_modbus_rtu_response(&mut *port, Duration::from_millis(1000))?;
     let values = parse_read_holding_response(&response, SLAVE_ID, REG_COUNT)?;
 
     println!("Registers: {values:?}");
