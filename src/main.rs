@@ -12,8 +12,8 @@ const SLAVE_ID: u8 = 247;
 // Example: read 2 holding registers starting at address 0x0000.
 // You will need the correct FoxESS register addresses for your model.
 const FUNCTION_READ_HOLDING: u8 = 0x04;
-const START_ADDR: u16 = 30016;
-const REG_COUNT: u16 = 2;
+const START_ADDR: u16 = 31038;
+const REG_COUNT: u16 = 1;
 
 fn main() -> Result<()> {
     let mut port = serialport::new(PORT, BAUD)
