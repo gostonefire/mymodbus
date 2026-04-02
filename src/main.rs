@@ -1,6 +1,7 @@
 mod manager_modbus;
+mod registers;
 
-use crate::manager_modbus::Modbus;
+use crate::manager_modbus::{Modbus, RegisterValue};
 use anyhow::{anyhow, Result};
 use std::env;
 
@@ -9,28 +10,34 @@ const PORT: &str = "/dev/ttyACM0"; // Changed to a more generic name for Windows
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        println!("Usage: {} <address>u16|u32", args[0]);
-        println!("Example: {} 31038u16", args[0]);
+        println!("Usage: {} <unique_id>", args[0]);
+        println!("Example: {} battery_soc", args[0]);
         return Ok(());
     }
 
     let input = &args[1];
     let mut client = Modbus::new(PORT)?;
 
-    if let Some(pos) = input.find("u16") {
-        let addr_str = &input[..pos];
-        let addr: u16 = addr_str.parse().map_err(|_| anyhow!("Invalid address: {}", addr_str))?;
-        println!("Reading address {addr} as u16...");
-        let val: u16 = client.read_register(addr)?;
-        println!("Value (u16): {val}");
-    } else if let Some(pos) = input.find("u32") {
-        let addr_str = &input[..pos];
-        let addr: u16 = addr_str.parse().map_err(|_| anyhow!("Invalid address: {}", addr_str))?;
-        println!("Reading address {addr} as u32...");
-        let val: u32 = client.read_register(addr)?;
-        println!("Value (u32): {val}");
-    } else {
-        return Err(anyhow!("Input should be in the format of e.g. '31038u16' or '31038u32'"));
+
+    let info = client
+        .get_register_info(input)
+        .ok_or_else(|| anyhow!("unknown register id: {input}"))?;
+
+    println!("Resolved register:");
+    println!("  name: {}", info.name);
+    println!("  address: {}", info.address);
+    println!("  data_type: {}", info.data_type);
+    println!("  input_type: {:?}", info.input_type);
+    println!("  count: {:?}", info.count);
+    println!("  device_class: {:?}", info.device_class);
+    println!("  unit_of_measurement: {:?}", info.unit_of_measurement);
+    println!("  scale: {:?}", info.scale);
+    println!("  precision: {:?}", info.precision);
+    println!("  state_class: {:?}", info.state_class);
+
+    match client.read_register_by_id_typed(input)? {
+        RegisterValue::U16(v) => println!("Read value (u16): {v}"),
+        RegisterValue::U32(v) => println!("Read value (u32): {v}"),
     }
 
     Ok(())

@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use crate::registers::RegisterInfo;
 
 const BAUD: u32 = 9600;
 const DATA_BITS: DataBits = DataBits::Eight;
@@ -66,6 +67,23 @@ impl Modbus {
 
         Ok(Modbus { port })    
     }
+
+    pub fn get_register_info(&self, unique_id: &str) -> Option<&'static RegisterInfo> {
+        crate::registers::get_register(unique_id)
+    }
+
+    pub fn read_register_by_id_typed(&mut self, unique_id: &str) -> Result<RegisterValue> {
+        let info = self
+            .get_register_info(unique_id)
+            .ok_or_else(|| anyhow!("unknown register id: {unique_id}"))?;
+
+        match info.data_type {
+            "u16" | "uint16" => Ok(RegisterValue::U16(self.read_register::<u16>(info.address)?)),
+            "u32" | "uint32" => Ok(RegisterValue::U32(self.read_register::<u32>(info.address)?)),
+            other => Err(anyhow!("unsupported data_type: {other}")),
+        }
+    }
+
     
     /// Read one or more registers from the Modbus device and combine them into type T.
     ///
@@ -137,6 +155,11 @@ impl Modbus {
 
         Ok(buf)
     }
+}
+
+pub enum RegisterValue {
+    U16(u16),
+    U32(u32),
 }
 
 /// Build a Modbus RTU Read Holding Registers request frame.
