@@ -45,6 +45,19 @@ impl ModbusRead for u32 {
     }
 }
 
+impl ModbusRead for i32 {
+    const REG_COUNT: u16 = 2;
+
+    fn from_registers(regs: &[u16]) -> Result<Self> {
+        if regs.len() < 2 {
+            return Err(anyhow!("not enough registers for i32"));
+        }
+        // Most common: high word first (BE-style across registers)
+        let value = ((regs[0] as u32) << 16) | (regs[1] as u32);
+        Ok(value as i32)
+    }
+}
+
 pub struct Modbus {
     port: Box<dyn SerialPort>,
 }
@@ -80,8 +93,43 @@ impl Modbus {
         match info.data_type {
             "u16" | "uint16" => Ok(RegisterValue::U16(self.read_register::<u16>(info.address)?)),
             "u32" | "uint32" => Ok(RegisterValue::U32(self.read_register::<u32>(info.address)?)),
+            "i32" | "int32" => Ok(RegisterValue::I32(self.read_register::<i32>(info.address)?)),
+            "string" => {
+                let count = info.count.ok_or_else(|| anyhow!("string type requires count field"))?;
+                Ok(RegisterValue::String(self.read_register_string(info.address, count)?))
+            },
             other => Err(anyhow!("unsupported data_type: {other}")),
         }
+    }
+
+    pub fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
+        let request = build_read_holding_request(SLAVE_ID, address, count);
+        println!("Sending string request: address={}, count={}", address, count);
+
+        // Clear stale bytes, then observe a quiet period before sending.
+        let _ = &self.port.clear(serialport::ClearBuffer::All);
+        std::thread::sleep(Duration::from_millis(5));
+
+        self.port.write_all(&request)?;
+        self.port.flush()?;
+
+        let response = &self.read_modbus_rtu_response()?;
+        let regs = parse_read_holding_response(&response, SLAVE_ID, count)?;
+        
+        // Convert registers to bytes and then to a string.
+        // Each register (u16) is two characters.
+        let mut bytes = Vec::with_capacity(regs.len() * 2);
+        for reg in regs {
+            let b = reg.to_be_bytes();
+            bytes.push(b[0]);
+            bytes.push(b[1]);
+        }
+        
+        // Strings in Modbus are often null-terminated or padded with nulls/spaces.
+        // We'll trim them.
+        let s = String::from_utf8_lossy(&bytes).trim_matches('\0').trim().to_string();
+        println!("String result: {}", s);
+        Ok(s)
     }
 
     
@@ -157,9 +205,12 @@ impl Modbus {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum RegisterValue {
     U16(u16),
     U32(u32),
+    I32(i32),
+    String(String),
 }
 
 /// Build a Modbus RTU Read Holding Registers request frame.
@@ -264,4 +315,69 @@ fn modbus_crc16(data: &[u8]) -> u16 {
     }
 
     crc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_response_u16() {
+        // Slave 247 (0xF7), Func 4, 2 bytes (1 reg), Value 0x1234
+        let mut frame = vec![0xF7, 0x04, 0x02, 0x12, 0x34];
+        let crc = modbus_crc16(&frame);
+        frame.push((crc & 0xFF) as u8);
+        frame.push((crc >> 8) as u8);
+
+        let regs = parse_read_holding_response(&frame, 247, 1).unwrap();
+        assert_eq!(regs, vec![0x1234]);
+        let val = u16::from_registers(&regs).unwrap();
+        assert_eq!(val, 0x1234);
+    }
+
+    #[test]
+    fn test_parse_response_u32() {
+        // Slave 247, Func 4, 4 bytes (2 regs), Value 0x12345678
+        let mut frame = vec![0xF7, 0x04, 0x04, 0x12, 0x34, 0x56, 0x78];
+        let crc = modbus_crc16(&frame);
+        frame.push((crc & 0xFF) as u8);
+        frame.push((crc >> 8) as u8);
+
+        let regs = parse_read_holding_response(&frame, 247, 2).unwrap();
+        assert_eq!(regs, vec![0x1234, 0x5678]);
+        let val = u32::from_registers(&regs).unwrap();
+        assert_eq!(val, 0x12345678);
+    }
+
+    #[test]
+    fn test_parse_response_i32() {
+        // Slave 247, Func 4, 4 bytes (2 regs), Value -1 (0xFFFFFFFF)
+        let mut frame = vec![0xF7, 0x04, 0x04, 0xFF, 0xFF, 0xFF, 0xFF];
+        let crc = modbus_crc16(&frame);
+        frame.push((crc & 0xFF) as u8);
+        frame.push((crc >> 8) as u8);
+
+        let regs = parse_read_holding_response(&frame, 247, 2).unwrap();
+        assert_eq!(regs, vec![0xFFFF, 0xFFFF]);
+        let val = i32::from_registers(&regs).unwrap();
+        assert_eq!(val, -1);
+    }
+
+    #[test]
+    fn test_string_conversion() {
+        let regs = vec![
+            u16::from_be_bytes([b'H', b'e']),
+            u16::from_be_bytes([b'l', b'l']),
+            u16::from_be_bytes([b'o', 0]),
+        ];
+        
+        let mut bytes = Vec::new();
+        for reg in regs {
+            let b = reg.to_be_bytes();
+            bytes.push(b[0]);
+            bytes.push(b[1]);
+        }
+        let s = String::from_utf8_lossy(&bytes).trim_matches('\0').trim().to_string();
+        assert_eq!(s, "Hello");
+    }
 }

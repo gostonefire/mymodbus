@@ -38,6 +38,8 @@ fn main() -> Result<()> {
     match client.read_register_by_id_typed(input)? {
         RegisterValue::U16(v) => println!("Read value (u16): {v}"),
         RegisterValue::U32(v) => println!("Read value (u32): {v}"),
+        RegisterValue::I32(v) => println!("Read value (i32): {v}"),
+        RegisterValue::String(v) => println!("Read value (string): {v}"),
     }
 
     Ok(())
