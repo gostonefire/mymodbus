@@ -27,7 +27,7 @@ pub struct RegisterInfo {
     pub unit_of_measurement: Option<&'static str>,
     /// Scale factor for the raw register value.
     pub scale: Option<f64>,
-    /// Number of significant digits for the raw register value.
+    /// Number of decimals to show in the UI.
     pub precision: Option<u8>,
     /// Home Assistant style state class (e.g., "measurement", "total").
     pub state_class: Option<&'static str>,
