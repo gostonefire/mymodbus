@@ -246,17 +246,30 @@ pub enum RegisterValue {
 }
 
 impl RegisterValue {
-    pub fn to_f64(&self, scale: Option<f64>) -> Result<f64> {
+    /// Convert a register value to an f64 with optional scaling and precision.
+    ///
+    /// # Arguments
+    ///
+    /// * `scale` - An optional scale factor to apply to the raw value.
+    /// * `precision` - An optional number of decimal places to round to.
+    pub fn to_f64(&self, scale: Option<f64>, precision: Option<u8>) -> Result<f64> {
         let scale = scale.unwrap_or(1.0);
-        
-        match self {
-            RegisterValue::U16(value) => Ok(*value as f64 * scale),
-            RegisterValue::U32(value) => Ok(*value as f64 * scale),
-            RegisterValue::I32(value) => Ok(*value as f64 * scale),
-            RegisterValue::String(_) => Err(anyhow!("Cannot convert string to f64")),
-        }
-    }    
-}
+
+        let value = match self {
+            RegisterValue::U16(value) => *value as f64 * scale,
+            RegisterValue::U32(value) => *value as f64 * scale,
+            RegisterValue::I32(value) => *value as f64 * scale,
+            RegisterValue::String(_) => return Err(anyhow!("Cannot convert string to f64")),
+        };
+
+        Ok(match precision {
+            Some(p) => {
+                let factor = 10f64.powi(p as i32);
+                (value * factor).round() / factor
+            }
+            None => value,
+        })
+    }}
 
 /// Build a Modbus RTU Read Holding Registers request frame.
 ///
