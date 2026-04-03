@@ -56,12 +56,22 @@ fn main() -> Result<()> {
     println!("  precision: {:?}", info.precision);
     println!("  state_class: {:?}", info.state_class);
 
+    let result = client.read_register_by_id_typed(input)?;
+    if let RegisterValue::String(s) = result {
+        println!("Read value: {}", s);
+    } else {
+        println!("Read value: {}{}", result.to_f64(info.scale)?, info.unit_of_measurement.unwrap_or(""));
+    }
+
+    /*
     match client.read_register_by_id_typed(input)? {
         RegisterValue::U16(v) => println!("Read value (u16): {v}"),
         RegisterValue::U32(v) => println!("Read value (u32): {v}"),
         RegisterValue::I32(v) => println!("Read value (i32): {v}"),
         RegisterValue::String(v) => println!("Read value (string): {v}"),
     }
+
+     */
 
     Ok(())
 }
