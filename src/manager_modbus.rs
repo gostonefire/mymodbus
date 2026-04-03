@@ -129,7 +129,7 @@ impl Modbus {
     ///
     /// * `address` - The starting register address.
     /// * `count` - The number of registers to read.
-    pub fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
+    fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
         let request = build_read_holding_request(SLAVE_ID, address, count);
         println!("Sending string request: address={}, count={}", address, count);
 
