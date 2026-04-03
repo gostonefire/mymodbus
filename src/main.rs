@@ -1,3 +1,12 @@
+//! # Modbus CLI Tool
+//!
+//! This application provides a command-line interface for reading data from a Modbus device
+//! (e.g., an inverter) via a serial port using the RTU protocol.
+//!
+//! The tool resolves register identifiers into their corresponding Modbus addresses
+//! and data types using a predefined register database, performs the serial communication,
+//! and displays the results.
+
 mod manager_modbus;
 mod registers;
 
@@ -5,8 +14,20 @@ use crate::manager_modbus::{Modbus, RegisterValue};
 use anyhow::{anyhow, Result};
 use std::env;
 
-const PORT: &str = "/dev/ttyACM0"; // Changed to a more generic name for Windows example
+/// The default serial port to connect to.
+const PORT: &str = "/dev/ttyACM0";
 
+/// Main entry point for the Modbus CLI tool.
+///
+/// This function:
+/// 1. Parses the command-line arguments to get the register identifier.
+/// 2. Initializes the Modbus client.
+/// 3. Resolves the register metadata.
+/// 4. Reads the register value and displays it.
+///
+/// # Arguments
+///
+/// * `args` - Command-line arguments from the environment.
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {

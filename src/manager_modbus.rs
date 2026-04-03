@@ -1,3 +1,10 @@
+//! # Modbus RTU Manager
+//!
+//! This module provides the core logic for communicating with Modbus RTU devices
+//! over a serial port. It includes traits for reading different data types from
+//! registers, a `Modbus` client for managing the connection, and helper functions
+//! for frame building and parsing.
+
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
@@ -10,7 +17,7 @@ const PARITY: Parity = Parity::None;
 const STOP_BITS: StopBits = StopBits::One;
 const FLOW_CONTROL: FlowControl = FlowControl::None;
 const TIMEOUT: Duration = Duration::from_millis(300);
-const OVERALL_TIMEOUT: Duration = Duration::from_millis(1000);
+const OVERALL_TIMEOUT: Duration = Duration::from_millis(500);
 const SLAVE_ID: u8 = 247;
 const FUNCTION_READ_HOLDING: u8 = 0x04;
 
@@ -20,6 +27,10 @@ pub trait ModbusRead: Sized {
     const REG_COUNT: u16;
 
     /// Combine the read registers into the target type.
+    ///
+    /// # Arguments
+    ///
+    /// * `regs` - A slice of 16-bit registers read from the device.
     fn from_registers(regs: &[u16]) -> Result<Self>;
 }
 
@@ -81,10 +92,20 @@ impl Modbus {
         Ok(Modbus { port })    
     }
 
+    /// Get metadata for a register by its unique identifier.
+    ///
+    /// # Arguments
+    ///
+    /// * `unique_id` - The identifier of the register.
     pub fn get_register_info(&self, unique_id: &str) -> Option<&'static RegisterInfo> {
         crate::registers::get_register(unique_id)
     }
 
+    /// Read a register by its unique identifier and return a typed value.
+    ///
+    /// # Arguments
+    ///
+    /// * `unique_id` - The identifier of the register.
     pub fn read_register_by_id_typed(&mut self, unique_id: &str) -> Result<RegisterValue> {
         let info = self
             .get_register_info(unique_id)
@@ -102,6 +123,12 @@ impl Modbus {
         }
     }
 
+    /// Read a sequence of registers and interpret them as a UTF-8 string.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The starting register address.
+    /// * `count` - The number of registers to read.
     pub fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
         let request = build_read_holding_request(SLAVE_ID, address, count);
         println!("Sending string request: address={}, count={}", address, count);
@@ -205,11 +232,16 @@ impl Modbus {
     }
 }
 
+/// Represents a value read from a Modbus register.
 #[derive(Debug, Clone)]
 pub enum RegisterValue {
+    /// A 16-bit unsigned integer.
     U16(u16),
+    /// A 32-bit unsigned integer (occupies two registers).
     U32(u32),
+    /// A 32-bit signed integer (occupies two registers).
     I32(i32),
+    /// A UTF-8 string.
     String(String),
 }
 

@@ -1,22 +1,44 @@
+//! # Modbus Register Definitions
+//!
+//! This module defines the structure for Modbus registers and provides a static database
+//! of known registers for a Modbus device, typically an inverter.
+//!
+//! Each register entry contains its name, address, data type, and optional unit/scale information.
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Metadata for a specific Modbus register.
 #[derive(Debug, Clone)]
 pub struct RegisterInfo {
+    /// Friendly name for display.
     pub name: &'static str,
+    /// Starting Modbus register address.
     pub address: u16,
+    /// Data type representation (e.g., "uint16", "uint32", "string").
     pub data_type: &'static str,
+    /// Whether it's an input register.
     pub input_type: Option<&'static str>,
+    /// Number of registers for this entry (required for strings).
     pub count: Option<u16>,
+    /// Device class (e.g., "voltage", "current").
     pub device_class: Option<&'static str>,
+    /// Unit of measurement (e.g., "V", "A", "kWh").
     pub unit_of_measurement: Option<&'static str>,
+    /// Scale factor for the raw register value.
     pub scale: Option<f64>,
+    /// Number of decimal places to show.
     pub precision: Option<u8>,
+    /// Home Assistant style state class (e.g., "measurement", "total").
     pub state_class: Option<&'static str>,
 }
 
+/// A lazily initialized hash map of register definitions.
 pub static REGISTERS: OnceLock<HashMap<&'static str, RegisterInfo>> = OnceLock::new();
 
+/// Provides access to the static register database.
+///
+/// This function initializes the `REGISTERS` map on the first call.
 pub fn register_db() -> &'static HashMap<&'static str, RegisterInfo> {
     REGISTERS.get_or_init(|| {
         let mut map = HashMap::new();
@@ -132,6 +154,11 @@ pub fn register_db() -> &'static HashMap<&'static str, RegisterInfo> {
     })
 }
 
+/// Look up a register by its unique identifier.
+///
+/// # Arguments
+///
+/// * `unique_id` - The identifier of the register (e.g., "pv1_voltage").
 pub fn get_register(unique_id: &str) -> Option<&'static RegisterInfo> {
     register_db().get(unique_id)
 }

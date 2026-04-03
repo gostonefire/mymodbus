@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serialport = "4.9"
+serialport = { version = "4.9", default-features = false }
 anyhow = "1"
