@@ -131,7 +131,6 @@ impl Modbus {
     /// * `count` - The number of registers to read.
     fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
         let request = build_read_holding_request(SLAVE_ID, address, count);
-        println!("Sending string request: address={}, count={}", address, count);
 
         // Clear stale bytes, then observe a quiet period before sending.
         let _ = &self.port.clear(serialport::ClearBuffer::All);
@@ -155,7 +154,6 @@ impl Modbus {
         // Strings in Modbus are often null-terminated or padded with nulls/spaces.
         // We'll trim them.
         let s = String::from_utf8_lossy(&bytes).trim_matches('\0').trim().to_string();
-        println!("String result: {}", s);
         Ok(s)
     }
 
@@ -168,7 +166,6 @@ impl Modbus {
     pub fn read_register<T: ModbusRead + Debug>(&mut self, address: u16) -> Result<T> {
         let count = T::REG_COUNT;
         let request = build_read_holding_request(SLAVE_ID, address, count);
-        println!("Sending request: {:?}", request);
 
         // Clear stale bytes, then observe a quiet period before sending.
         let _ = &self.port.clear(serialport::ClearBuffer::All);
@@ -181,8 +178,6 @@ impl Modbus {
         let regs = parse_read_holding_response(&response, SLAVE_ID, count)?;
         let value = T::from_registers(&regs)?;
 
-        println!("Result: {value:?}");
-        
         Ok(value)
     }
 
