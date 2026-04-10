@@ -9,13 +9,19 @@
 
 mod manager_modbus;
 mod registers;
+mod initialization;
+mod logging;
+mod persistence;
 
-use crate::manager_modbus::{Modbus, RegisterValue};
+use crate::manager_modbus::{run, RegisterRequest, RegisterValue};
 use anyhow::{anyhow, Result};
-use std::env;
+use std::thread;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener};
+use log::error;
+use crate::initialization::config;
 
-/// The default serial port to connect to.
-const PORT: &str = "/dev/ttyACM0";
+const HTTP_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
 /// Main entry point for the Modbus CLI tool.
 ///
@@ -29,40 +35,82 @@ const PORT: &str = "/dev/ttyACM0";
 ///
 /// * `args` - Command-line arguments from the environment.
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: {} <unique_id>", args[0]);
-        println!("Example: {} battery_soc", args[0]);
-        return Ok(());
-    }
+    let config = config()?;
 
-    let input = &args[1];
-    let mut client = Modbus::new(PORT)?;
+    let (tx_result, rx_result) = std::sync::mpsc::channel::<Result<RegisterValue>>();
+    let (tx_request, rx_request) = std::sync::mpsc::channel::<RegisterRequest>();
 
+    thread::spawn(move || {
+        if let Err(r) = run(config.modbus.serial_port, tx_result, rx_request) {
+            log::error!("modbus error: {}", r);
+        }
+    });
 
-    let info = client
-        .get_register_info(input)
-        .ok_or_else(|| anyhow!("unknown register id: {input}"))?;
+    let socket_addr = SocketAddr::new(config.web_server.bind_address.parse()?, config.web_server.bind_port);
+    let listener = TcpListener::bind(socket_addr)?;
+    for stream in listener.incoming() {
+        match stream {
+            Ok(mut stream) => {
+                let mut buffer = [0; 1024];
+                match stream.read(&mut buffer) {
+                    Ok(_) => {
+                        let request = String::from_utf8_lossy(&buffer[..]);
 
-    println!("Resolved register:");
-    println!("  name: {}", info.name);
-    println!("  address: {}", info.address);
-    println!("  data_type: {}", info.data_type);
-    println!("  input_type: {:?}", info.input_type);
-    println!("  count: {:?}", info.count);
-    println!("  device_class: {:?}", info.device_class);
-    println!("  unit_of_measurement: {:?}", info.unit_of_measurement);
-    println!("  scale: {:?}", info.scale);
-    println!("  precision: {:?}", info.precision);
-    println!("  state_class: {:?}", info.state_class);
+                        let request_line = request.lines().next().unwrap_or("");
+                        let path = request_line
+                            .strip_prefix("GET ")
+                            .and_then(|rest| rest.split_whitespace().next());
 
-    let result = client.read_register_by_id_typed(input)?;
-    if let RegisterValue::String(s) = result {
-        println!("Read value: {}", s);
-    } else {
-        println!("Read value: {}{}", result.to_f64(info.scale, info.precision)?, info.unit_of_measurement.unwrap_or(""));
+                        let result = match path {
+                            Some(path) if path.starts_with("/id/") => {
+                                let value = path.trim_start_matches("/id/").trim_end_matches('/');
+                                tx_request.send(RegisterRequest::UniqueId(value.to_string()))?;
+                                rx_result.recv()?
+                            }
+                            Some(path) if path.starts_with("/address/") => {
+                                let value = path.trim_start_matches("/address/").trim_end_matches('/');
+                                tx_request.send(RegisterRequest::Raw(value.to_string()))?;
+                                rx_result.recv()?
+                            }
+                            _ => {
+                                Err(anyhow!("unsupported request"))
+                            }
+                        };
+
+                        if let Err(e) = stream.write(http_response(result).as_bytes()) {
+                            error!("could not write to stream: {}", e);
+                        }
+                    },
+                    Err(e) => { error!("failed to read from stream: {}", e); }
+                }
+            },
+            Err(e) => { error!("failed to get stream for requestor: {}", e); }
+        }
     }
 
     Ok(())
 }
 
+/// Creates an HTTP response string with data in json
+///
+/// # Arguments
+///
+/// * 'data' - data to include in response
+fn http_response(data: Result<RegisterValue>) -> String {
+
+    let value = match data {
+        Ok(data) => {
+            match data {
+                RegisterValue::String(value) => value,
+                _ => {
+                    data.to_f64().map(|v| v.to_string()).unwrap_or_else(|e| e.to_string())
+                }
+            }
+        },
+        Err(e) => {
+            e.to_string()
+        }
+    };
+
+    format!("{}{{\"data\": {}}}", HTTP_RESPONSE, value)
+}

@@ -6,6 +6,8 @@
 //! for frame building and parsing.
 
 use std::fmt::Debug;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
@@ -112,9 +114,9 @@ impl Modbus {
             .ok_or_else(|| anyhow!("unknown register id: {unique_id}"))?;
 
         match info.data_type {
-            "u16" | "uint16" => Ok(RegisterValue::U16(self.read_register::<u16>(info.address)?)),
-            "u32" | "uint32" => Ok(RegisterValue::U32(self.read_register::<u32>(info.address)?)),
-            "i32" | "int32" => Ok(RegisterValue::I32(self.read_register::<i32>(info.address)?)),
+            "u16" | "uint16" => Ok(RegisterValue::U16((self.read_register::<u16>(info.address)?, info.scale, info.precision))),
+            "u32" | "uint32" => Ok(RegisterValue::U32((self.read_register::<u32>(info.address)?, info.scale, info.precision))),
+            "i32" | "int32" => Ok(RegisterValue::I32((self.read_register::<i32>(info.address)?, info.scale, info.precision))),
             "string" => {
                 let count = info.count.ok_or_else(|| anyhow!("string type requires count field"))?;
                 Ok(RegisterValue::String(self.read_register_string(info.address, count)?))
@@ -231,40 +233,45 @@ impl Modbus {
 #[derive(Debug, Clone)]
 pub enum RegisterValue {
     /// A 16-bit unsigned integer.
-    U16(u16),
+    U16((u16, Option<f64>, Option<u8>)),
     /// A 32-bit unsigned integer (occupies two registers).
-    U32(u32),
+    U32((u32, Option<f64>, Option<u8>)),
     /// A 32-bit signed integer (occupies two registers).
-    I32(i32),
+    I32((i32, Option<f64>, Option<u8>)),
     /// A UTF-8 string.
     String(String),
 }
 
 impl RegisterValue {
-    /// Convert a register value to an f64 with optional scaling and precision.
+    /// Convert a register value to an f64 using optional scaling and precision.
     ///
-    /// # Arguments
-    ///
-    /// * `scale` - An optional scale factor to apply to the raw value.
-    /// * `precision` - An optional number of decimal places to round to.
-    pub fn to_f64(&self, scale: Option<f64>, precision: Option<u8>) -> Result<f64> {
-        let scale = scale.unwrap_or(1.0);
+    pub fn to_f64(&self) -> Result<f64> {
 
-        let value = match self {
-            RegisterValue::U16(value) => *value as f64 * scale,
-            RegisterValue::U32(value) => *value as f64 * scale,
-            RegisterValue::I32(value) => *value as f64 * scale,
+        let (data, scale, precision) = match self {
+            RegisterValue::U16((data, scale, precision)) => (*data as f64, scale, precision),
+            RegisterValue::U32((data, scale, precision)) => (*data as f64, scale, precision),
+            RegisterValue::I32((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::String(_) => return Err(anyhow!("Cannot convert string to f64")),
         };
 
+        let value = data * scale.unwrap_or(1.0);
+
         Ok(match precision {
             Some(p) => {
-                let factor = 10f64.powi(p as i32);
+                let factor = 10f64.powi(*p as i32);
                 (value * factor).round() / factor
             }
             None => value,
         })
-    }}
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RegisterRequest {
+    UniqueId(String),
+    Raw(String),
+    Exit,
+}
 
 /// Build a Modbus RTU Read Holding Registers request frame.
 ///
@@ -287,7 +294,6 @@ fn build_read_holding_request(slave: u8, start: u16, count: u16) -> Vec<u8> {
     frame.push((crc >> 8) as u8);         // CRC high byte
     frame
 }
-
 
 
 /// Parse a Modbus RTU Read Holding Registers response frame.
@@ -368,6 +374,66 @@ fn modbus_crc16(data: &[u8]) -> u16 {
     }
 
     crc
+}
+
+/// Starts and withholds a message loop that reads requests from the channel and sends responses.
+///
+/// # Arguments
+///
+/// * 'port' - serial port for communication with the Modbus device.
+/// * 'tx' - response channel
+/// * 'rx' - request channel
+pub fn run(port: String, tx: mpsc::Sender<Result<RegisterValue>>, rx: mpsc::Receiver<RegisterRequest>) -> Result<()> {
+    let mut modbus = Modbus::new(&port)?;
+
+    loop {
+        // Shields the inverter from excessive requests.
+        thread::sleep(Duration::from_millis(1000));
+
+        // Wait for a request
+        let request = rx.recv()?;
+        match request {
+            RegisterRequest::UniqueId(unique_id) => {
+                tx.send(modbus.read_register_by_id_typed(&unique_id))?;
+            }
+            RegisterRequest::Raw(raw_request) => {
+                let Some((addr, data_type)) = split_addr_type(&raw_request) else {
+                    tx.send(Err(anyhow!("invalid raw request: {}", raw_request)))?;
+                    return Ok(());
+                };
+
+                let Ok(address) = addr.parse::<u16>() else {
+                    tx.send(Err(anyhow!("invalid address: {}", addr)))?;
+                    return Ok(());
+                };
+
+                let value = match data_type {
+                    "u16" | "uint16" => RegisterValue::U16((modbus.read_register::<u16>(address)?, None, None)),
+                    "u32" | "uint32" => RegisterValue::U32((modbus.read_register::<u32>(address)?, None, None)),
+                    "i32" | "int32" => RegisterValue::I32((modbus.read_register::<i32>(address)?, None, None)),
+                    other => {
+                        tx.send(Err(anyhow!("unsupported data_type: {}", other)))?;
+                        return Ok(());
+                    }
+                };
+
+                tx.send(Ok(value))?;
+            }
+            RegisterRequest::Exit => {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Splits address and data type from raw request string
+///
+/// # Arguments
+///
+/// * 's' - Raw request string
+fn split_addr_type(s: &str) -> Option<(&str, &str)> {
+    let idx = s.find(|c: char| !c.is_ascii_digit())?;
+    Some((&s[..idx], &s[idx..]))
 }
 
 #[cfg(test)]
