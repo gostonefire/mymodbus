@@ -6,18 +6,31 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// One historical sample.
+/// A single timestamped measurement.
 ///
-/// Keep this intentionally small and plain so it is cheap to serialize.
+/// This is reusable for any power-related metric or other time series value.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Sample {
+pub struct TimedValue {
     /// Unix timestamp in seconds.
     pub ts: i64,
-    /// Example value, e.g. power production.
+    /// Measured value.
     pub value: f64,
 }
 
-/// On-disk persistence for a minute-sampled time series.
+/// One historical record containing paired measurements.
+///
+/// At minimum this stores:
+/// - power produced
+/// - power consumed / load power
+///
+/// You can extend this later with more fields, such as exported power.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PowerSample {
+    pub produced: TimedValue,
+    pub consumed: TimedValue,
+}
+
+/// On-disk persistence for a sampled time series.
 ///
 /// Strategy:
 /// - Append new samples to a journal file
@@ -30,7 +43,11 @@ pub struct HistoryStore {
 }
 
 impl HistoryStore {
-    pub fn new(snapshot_path: impl Into<PathBuf>, journal_path: impl Into<PathBuf>, max_samples: usize) -> Self {
+    pub fn new(
+        snapshot_path: impl Into<PathBuf>,
+        journal_path: impl Into<PathBuf>,
+        max_samples: usize,
+    ) -> Self {
         Self {
             snapshot_path: snapshot_path.into(),
             journal_path: journal_path.into(),
@@ -43,16 +60,18 @@ impl HistoryStore {
     /// Recovery order:
     /// 1. load snapshot
     /// 2. replay journal entries
-    pub fn load(&self) -> Result<Vec<Sample>> {
+    pub fn load(&self) -> Result<Vec<PowerSample>> {
         let mut buffer = Vec::with_capacity(self.max_samples);
 
         if self.snapshot_path.exists() {
-            buffer = self.load_snapshot(&self.snapshot_path)
+            buffer = self
+                .load_snapshot(&self.snapshot_path)
                 .with_context(|| format!("loading snapshot {:?}", self.snapshot_path))?;
         }
 
         if self.journal_path.exists() {
-            let journal_samples = self.load_journal(&self.journal_path)
+            let journal_samples = self
+                .load_journal(&self.journal_path)
                 .with_context(|| format!("loading journal {:?}", self.journal_path))?;
             for sample in journal_samples {
                 push_bounded(&mut buffer, sample, self.max_samples);
@@ -65,7 +84,7 @@ impl HistoryStore {
     /// Append a batch of samples to the journal.
     ///
     /// Batch writes are much friendlier to flash storage than per-sample writes.
-    pub fn append_journal_batch(&self, samples: &[Sample]) -> Result<()> {
+    pub fn append_journal_batch(&self, samples: &[PowerSample]) -> Result<()> {
         if samples.is_empty() {
             return Ok(());
         }
@@ -92,7 +111,7 @@ impl HistoryStore {
     /// Write the full buffer as a snapshot.
     ///
     /// This should be called infrequently, e.g. every hour or every few hours.
-    pub fn write_snapshot(&self, buffer: &[Sample]) -> Result<()> {
+    pub fn write_snapshot(&self, buffer: &[PowerSample]) -> Result<()> {
         if let Some(parent) = self.snapshot_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating snapshot directory {:?}", parent))?;
@@ -135,7 +154,7 @@ impl HistoryStore {
         Ok(())
     }
 
-    fn load_snapshot(&self, path: &Path) -> Result<Vec<Sample>> {
+    fn load_snapshot(&self, path: &Path) -> Result<Vec<PowerSample>> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
 
@@ -150,7 +169,7 @@ impl HistoryStore {
         Ok(buffer)
     }
 
-    fn load_journal(&self, path: &Path) -> Result<Vec<Sample>> {
+    fn load_journal(&self, path: &Path) -> Result<Vec<PowerSample>> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
 
@@ -173,21 +192,34 @@ impl HistoryStore {
 }
 
 /// Push while keeping only the most recent `max_samples`.
-fn push_bounded(buffer: &mut Vec<Sample>, sample: Sample, max_samples: usize) {
+fn push_bounded(buffer: &mut Vec<PowerSample>, sample: PowerSample, max_samples: usize) {
     if buffer.len() == max_samples {
         buffer.remove(0);
     }
     buffer.push(sample);
 }
 
-fn write_sample<W: Write>(writer: &mut W, sample: Sample) -> Result<()> {
-    write_i64(writer, sample.ts)?;
-    write_f64(writer, sample.value)?;
+fn write_sample<W: Write>(writer: &mut W, sample: PowerSample) -> Result<()> {
+    write_timed_value(writer, sample.produced)?;
+    write_timed_value(writer, sample.consumed)?;
     Ok(())
 }
 
-fn read_sample<R: Read>(reader: &mut R) -> Result<Sample> {
-    Ok(Sample {
+fn read_sample<R: Read>(reader: &mut R) -> Result<PowerSample> {
+    Ok(PowerSample {
+        produced: read_timed_value(reader)?,
+        consumed: read_timed_value(reader)?,
+    })
+}
+
+fn write_timed_value<W: Write>(writer: &mut W, item: TimedValue) -> Result<()> {
+    write_i64(writer, item.ts)?;
+    write_f64(writer, item.value)?;
+    Ok(())
+}
+
+fn read_timed_value<R: Read>(reader: &mut R) -> Result<TimedValue> {
+    Ok(TimedValue {
         ts: read_i64(reader)?,
         value: read_f64(reader)?,
     })
