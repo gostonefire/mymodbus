@@ -376,14 +376,19 @@ fn modbus_crc16(data: &[u8]) -> u16 {
     crc
 }
 
+#[derive(Debug)]
+pub struct ModbusRequest {
+    pub request: RegisterRequest,
+    pub response: mpsc::Sender<Result<RegisterValue>>,
+}
+
 /// Starts and withholds a message loop that reads requests from the channel and sends responses.
 ///
 /// # Arguments
 ///
 /// * 'port' - serial port for communication with the Modbus device.
-/// * 'tx' - response channel
 /// * 'rx' - request channel
-pub fn run(port: String, tx: mpsc::Sender<Result<RegisterValue>>, rx: mpsc::Receiver<RegisterRequest>) -> Result<()> {
+pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>) -> Result<()> {
     let mut modbus = Modbus::new(&port)?;
 
     loop {
@@ -391,39 +396,61 @@ pub fn run(port: String, tx: mpsc::Sender<Result<RegisterValue>>, rx: mpsc::Rece
         thread::sleep(Duration::from_millis(1000));
 
         // Wait for a request
-        let request = rx.recv()?;
-        match request {
+        let envelope = rx.recv()?;
+        match envelope.request {
             RegisterRequest::UniqueId(unique_id) => {
-                tx.send(modbus.read_register_by_id_typed(&unique_id))?;
+                envelope.response.send(modbus.read_register_by_id_typed(&unique_id))?;
             }
             RegisterRequest::Raw(raw_request) => {
-                let Some((addr, data_type)) = split_addr_type(&raw_request) else {
-                    tx.send(Err(anyhow!("invalid raw request: {}", raw_request)))?;
-                    return Ok(());
-                };
+                let result = (|| -> Result<RegisterValue> {
+                    let Some((addr, data_type)) = split_addr_type(&raw_request) else {
+                        return Err(anyhow!("invalid raw request: {}", raw_request));
+                    };
 
-                let Ok(address) = addr.parse::<u16>() else {
-                    tx.send(Err(anyhow!("invalid address: {}", addr)))?;
-                    return Ok(());
-                };
+                    let Ok(address) = addr.parse::<u16>() else {
+                        return Err(anyhow!("invalid address: {}", addr));
+                    };
 
-                let value = match data_type {
-                    "u16" | "uint16" => RegisterValue::U16((modbus.read_register::<u16>(address)?, None, None)),
-                    "u32" | "uint32" => RegisterValue::U32((modbus.read_register::<u32>(address)?, None, None)),
-                    "i32" | "int32" => RegisterValue::I32((modbus.read_register::<i32>(address)?, None, None)),
-                    other => {
-                        tx.send(Err(anyhow!("unsupported data_type: {}", other)))?;
-                        return Ok(());
-                    }
-                };
+                    let value = match data_type {
+                        "u16" | "uint16" => RegisterValue::U16((modbus.read_register::<u16>(address)?, None, None)),
+                        "u32" | "uint32" => RegisterValue::U32((modbus.read_register::<u32>(address)?, None, None)),
+                        "i32" | "int32" => RegisterValue::I32((modbus.read_register::<i32>(address)?, None, None)),
+                        other => return Err(anyhow!("unsupported data_type: {}", other)),
+                    };
 
-                tx.send(Ok(value))?;
+                    Ok(value)
+                })();
+
+                envelope.response.send(result)?;
             }
             RegisterRequest::Exit => {
                 return Ok(());
             }
         }
     }
+}
+
+/// Send one Modbus request and wait for its reply.
+pub fn send_request(
+    tx: &mpsc::Sender<ModbusRequest>,
+    request: RegisterRequest,
+) -> Result<RegisterValue> {
+    let (response_tx, response_rx) = mpsc::channel();
+    tx.send(ModbusRequest {
+        request,
+        response: response_tx,
+    })?;
+    response_rx.recv()?
+}
+
+/// Send an exit request to the Modbus worker.
+pub fn send_exit(tx: &mpsc::Sender<ModbusRequest>) -> Result<()> {
+    let (response_tx, _response_rx) = mpsc::channel();
+    tx.send(ModbusRequest {
+        request: RegisterRequest::Exit,
+        response: response_tx,
+    })?;
+    Ok(())
 }
 
 /// Splits address and data type from raw request string

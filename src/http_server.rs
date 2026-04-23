@@ -2,19 +2,21 @@ use anyhow::{anyhow, Result};
 use log::error;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
-
-use crate::manager_modbus::{RegisterRequest, RegisterValue};
+use crate::history_cache::HistoryCache;
+use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
+use crate::persistence::PowerSample;
 
 const HTTP_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
 pub fn run_server(
     bind_address: IpAddr,
     bind_port: u16,
-    tx_request: Sender<RegisterRequest>,
-    rx_result: Receiver<Result<RegisterValue>>,
+    tx_request: Sender<ModbusRequest>,
     rx_shutdown: Receiver<()>,
+    history_cache: Arc<HistoryCache>,
 ) -> Result<()> {
     let socket_addr = SocketAddr::new(bind_address, bind_port);
     let listener = TcpListener::bind(socket_addr)?;
@@ -38,21 +40,52 @@ pub fn run_server(
                             .strip_prefix("GET ")
                             .and_then(|rest| rest.split_whitespace().next());
 
-                        let result = match path {
+                        let response = match path {
                             Some(path) if path.starts_with("/id/") => {
                                 let value = path.trim_start_matches("/id/").trim_end_matches('/');
-                                tx_request.send(RegisterRequest::UniqueId(value.to_string()))?;
-                                rx_result.recv_timeout(Duration::from_secs(2))?
+                                Ok(http_response(send_request(
+                                    &tx_request,
+                                    RegisterRequest::UniqueId(value.to_string()),
+                                )))
                             }
                             Some(path) if path.starts_with("/address/") => {
                                 let value = path.trim_start_matches("/address/").trim_end_matches('/');
-                                tx_request.send(RegisterRequest::Raw(value.to_string()))?;
-                                rx_result.recv_timeout(Duration::from_secs(2))?
+                                Ok(http_response(send_request(
+                                    &tx_request,
+                                    RegisterRequest::Raw(value.to_string()),
+                                )))
+                            }
+                            Some(path) if path.starts_with("/history") => {
+                                let query = path.split_once('?').map(|(_, query)| query).unwrap_or("");
+                                let mut from_ts: Option<i64> = None;
+                                let mut to_ts: Option<i64> = None;
+
+                                for part in query.split('&').filter(|s| !s.is_empty()) {
+                                    if let Some(value) = part.strip_prefix("from_ts=") {
+                                        from_ts = value.parse::<i64>().ok();
+                                    } else if let Some(value) = part.strip_prefix("to_ts=") {
+                                        to_ts = value.parse::<i64>().ok();
+                                    }
+                                }
+
+                                match (from_ts, to_ts) {
+                                    (Some(from_ts), Some(to_ts)) => {
+                                        handle_history_query_json(history_cache.clone(), from_ts, to_ts)
+                                            .map(|json| format!("{}{}", HTTP_RESPONSE, json))
+                                    }
+                                    _ => Err(anyhow!(
+                                            "invalid request: /history requires from_ts and to_ts query parameters"
+                                        )),
+                                }
                             }
                             _ => Err(anyhow!("unsupported request")),
                         };
 
-                        if let Err(e) = stream.write(http_response(result).as_bytes()) {
+                        let body = response.unwrap_or_else(|e| {
+                            format!("{}{{\"error\":\"{}\"}}", HTTP_RESPONSE, e)
+                        });
+
+                        if let Err(e) = stream.write(body.as_bytes()) {
                             error!("could not write to stream: {}", e);
                         }
                     }
@@ -82,4 +115,56 @@ fn http_response(data: Result<RegisterValue>) -> String {
     };
 
     format!("{}{{\"data\": {}}}", HTTP_RESPONSE, value)
+}
+
+/// Query the in-memory history cache and return a JSON string.
+///
+/// The result shape is:
+/// {
+///   "from_ts": 123,
+///   "to_ts": 456,
+///   "truncated": false,
+///   "samples": [
+///     {"ts": 123, "produced": 1.2, "consumed": 0.8}
+///   ]
+/// }
+pub fn handle_history_query_json(
+    history_cache: Arc<HistoryCache>,
+    from_ts: i64,
+    to_ts: i64,
+) -> Result<String> {
+    if from_ts > to_ts {
+        return Err(anyhow!("invalid range: from_ts must be <= to_ts"));
+    }
+
+    let samples = history_cache.query(from_ts, to_ts);
+    Ok(history_response_json(from_ts, to_ts, false, &samples))
+}
+
+fn history_response_json(
+    from_ts: i64,
+    to_ts: i64,
+    truncated: bool,
+    samples: &[PowerSample],
+) -> String {
+    let mut out = String::new();
+
+    out.push('{');
+    out.push_str(&format!("\"from_ts\":{},", from_ts));
+    out.push_str(&format!("\"to_ts\":{},", to_ts));
+    out.push_str(&format!("\"truncated\":{},", truncated));
+    out.push_str("\"samples\":[");
+
+    for (idx, sample) in samples.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"ts\":{},\"produced\":{},\"consumed\":{}}}",
+            sample.ts, sample.produced, sample.consumed
+        ));
+    }
+
+    out.push_str("]}");
+    out
 }
