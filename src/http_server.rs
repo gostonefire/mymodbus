@@ -7,7 +7,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use crate::history_cache::HistoryCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
-use crate::persistence::PowerSample;
+use crate::poller::PowerSample;
 
 const HTTP_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
 
@@ -57,14 +57,14 @@ pub fn run_server(
                             }
                             Some(path) if path.starts_with("/history") => {
                                 let query = path.split_once('?').map(|(_, query)| query).unwrap_or("");
-                                let mut from_ts: Option<i64> = None;
-                                let mut to_ts: Option<i64> = None;
+                                let mut from_ts: Option<u64> = None;
+                                let mut to_ts: Option<u64> = None;
 
                                 for part in query.split('&').filter(|s| !s.is_empty()) {
                                     if let Some(value) = part.strip_prefix("from_ts=") {
-                                        from_ts = value.parse::<i64>().ok();
+                                        from_ts = value.parse::<u64>().ok();
                                     } else if let Some(value) = part.strip_prefix("to_ts=") {
-                                        to_ts = value.parse::<i64>().ok();
+                                        to_ts = value.parse::<u64>().ok();
                                     }
                                 }
 
@@ -130,8 +130,8 @@ fn http_response(data: Result<RegisterValue>) -> String {
 /// }
 pub fn handle_history_query_json(
     history_cache: Arc<HistoryCache>,
-    from_ts: i64,
-    to_ts: i64,
+    from_ts: u64,
+    to_ts: u64,
 ) -> Result<String> {
     if from_ts > to_ts {
         return Err(anyhow!("invalid range: from_ts must be <= to_ts"));
@@ -142,8 +142,8 @@ pub fn handle_history_query_json(
 }
 
 fn history_response_json(
-    from_ts: i64,
-    to_ts: i64,
+    from_ts: u64,
+    to_ts: u64,
     truncated: bool,
     samples: &[PowerSample],
 ) -> String {
@@ -160,8 +160,8 @@ fn history_response_json(
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"ts\":{},\"produced\":{},\"consumed\":{}}}",
-            sample.ts, sample.produced, sample.consumed
+            "{{\"ts\":{},\"produced\":{},\"consumed\":{},\"exported\":{}}}",
+            sample.ts, sample.produced, sample.consumed, sample.exported
         ));
     }
 

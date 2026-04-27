@@ -23,10 +23,6 @@ pub struct ModbusParameters {
 /// General configuration parameters for the application
 ///
 pub struct General {
-    /// the path to the journal file
-    pub journal_path: String,
-    /// the path to the snapshot file
-    pub snapshot_path: String,
     /// the path to the log file
     pub log_path: String,
     /// the logging level (Off, Error, Warn, Info, Debug, Trace)
@@ -86,8 +82,6 @@ impl PartialConfig {
                 serial_port: Self::require(self.modbus_serial_port, "modbus.serial_port")?,
             },
             general: General {
-                journal_path: Self::require(self.general_journal_path, "general.journal_path")?,
-                snapshot_path: Self::require(self.general_snapshot_path, "general.snapshot_path")?,
                 log_path: Self::require(self.general_log_path, "general.log_path")?,
                 log_level: Self::require(self.general_log_level, "general.log_level")?,
                 log_to_stdout: Self::require(self.general_log_to_stdout, "general.log_to_stdout")?,
