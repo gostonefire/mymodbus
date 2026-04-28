@@ -22,10 +22,18 @@ pub fn spawn_shutdown_listener(tx_shutdown: Sender<()>) -> Result<thread::JoinHa
         Ok(handle)
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
+        let (tx_ctrlc, rx_ctrlc) = std::sync::mpsc::channel::<()>();
+
+        ctrlc::set_handler(move || {
+            let _ = tx_ctrlc.send(());
+        })?;
+
         let handle = thread::spawn(move || {
-            let _ = tx_shutdown.send(());
+            if rx_ctrlc.recv().is_ok() {
+                let _ = tx_shutdown.send(());
+            }
         });
 
         Ok(handle)

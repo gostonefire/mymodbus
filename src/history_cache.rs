@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::RwLock;
-
+use log::debug;
 use crate::poller::PowerSample;
 
 pub type UnixTs = u64;
@@ -27,6 +27,7 @@ impl HistoryCache {
         let mut guard = self.inner.write().unwrap();
         guard.push_back(sample);
         self.prune_locked(&mut guard, sample.ts);
+        debug!("inserted sample, cache size: {}", guard.len());
     }
 
 

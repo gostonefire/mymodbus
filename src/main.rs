@@ -10,7 +10,7 @@ mod history_cache;
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;
 use crate::initialization::config;
-use crate::manager_modbus::{run, send_exit, ModbusRequest};
+use crate::manager_modbus::{run, send_exit, ModbusPortMode, ModbusRequest};
 use crate::poller::spawn_poller;
 use crate::shutdown::spawn_shutdown_listener;
 use anyhow::Result;
@@ -38,13 +38,13 @@ fn main() -> Result<()> {
     });
 
     let modbus_handle = thread::spawn(move || {
-        if let Err(r) = run(config.modbus.serial_port, rx_request) {
+        if let Err(r) = run(config.modbus.serial_port, rx_request, ModbusPortMode::Mock) {
             error!("modbus error: {}", r);
         }
     });
 
     let history_cache = Arc::new(HistoryCache::new(
-        48 * 60 * 60,
+        60 * 60,
     ));
 
     let poller_handle = spawn_poller(

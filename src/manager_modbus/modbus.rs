@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use crate::manager_modbus::modbus_mock;
 use crate::registers::RegisterInfo;
 
 const BAUD: u32 = 9600;
@@ -75,23 +76,40 @@ pub struct Modbus {
     port: Box<dyn SerialPort>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModbusPortMode {
+    Real,
+    Mock,
+}
+
 impl Modbus {
     /// Create a new Modbus client.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `serial_port` - The serial port to connect to.
-    pub fn new(serial_port: &str) -> Result<Self> {
-        let port = serialport::new(serial_port, BAUD)
-            .data_bits(DATA_BITS)
-            .parity(PARITY) // or Even, depending on your inverter config
-            .stop_bits(STOP_BITS)
-            .flow_control(FLOW_CONTROL)
-            .timeout(TIMEOUT)
-            .open()
-            .with_context(|| format!("failed to open {serial_port}"))?;
+    /// * `mode` - Whether to use a real serial port or an in-memory mock.
+    pub fn new(serial_port: &str, mode: ModbusPortMode) -> Result<Self> {
+        let port: Box<dyn SerialPort> = match mode {
+            ModbusPortMode::Real => serialport::new(serial_port, BAUD)
+                .data_bits(DATA_BITS)
+                .parity(PARITY)
+                .stop_bits(STOP_BITS)
+                .flow_control(FLOW_CONTROL)
+                .timeout(TIMEOUT)
+                .open()
+                .with_context(|| format!("failed to open {serial_port}"))?,
+            ModbusPortMode::Mock => modbus_mock::boxed_mock_port(),
+        };
 
-        Ok(Modbus { port })    
+        Ok(Modbus { port })
+    }
+
+    /// Create a new Modbus client backed by an already constructed port.
+    ///
+    /// This is useful for tests that need custom mock register values.
+    pub fn with_port(port: Box<dyn SerialPort>) -> Self {
+        Self { port }
     }
 
     /// Get metadata for a register by its unique identifier.
@@ -388,8 +406,8 @@ pub struct ModbusRequest {
 ///
 /// * 'port' - serial port for communication with the Modbus device.
 /// * 'rx' - request channel
-pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>) -> Result<()> {
-    let mut modbus = Modbus::new(&port)?;
+pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>, mode: ModbusPortMode) -> Result<()> {
+    let mut modbus = Modbus::new(&port, mode)?;
 
     loop {
         // Shields the inverter from excessive requests.

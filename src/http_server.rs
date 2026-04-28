@@ -9,7 +9,8 @@ use crate::history_cache::HistoryCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
 use crate::poller::PowerSample;
 
-const HTTP_RESPONSE: &str = "HTTP/1.1 200 OK\r\n\r\n";
+const HTTP_RESPONSE: &str =
+    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n";
 
 pub fn run_server(
     bind_address: IpAddr,
@@ -19,8 +20,22 @@ pub fn run_server(
     history_cache: Arc<HistoryCache>,
 ) -> Result<()> {
     let socket_addr = SocketAddr::new(bind_address, bind_port);
-    let listener = TcpListener::bind(socket_addr)?;
-    listener.set_nonblocking(true)?;
+
+    log::info!("starting http server on {}", socket_addr);
+
+    let listener = TcpListener::bind(socket_addr)
+        .map_err(|e| {
+            error!("failed to bind http server to {}: {}", socket_addr, e);
+            e
+        })?;
+
+    listener.set_nonblocking(true)
+        .map_err(|e| {
+            error!("failed to set http server listener to nonblocking mode: {}", e);
+            e
+        })?;
+
+    log::info!("http server listening on {}", socket_addr);
 
     loop {
         if rx_shutdown.try_recv().is_ok() {
@@ -30,11 +45,23 @@ pub fn run_server(
 
         match listener.accept() {
             Ok((mut stream, _addr)) => {
+                if let Err(e) = stream.set_nonblocking(false) {
+                    error!("failed to set http client stream to blocking mode: {}", e);
+                    continue;
+                }
+
+                if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
+                    error!("failed to set http client stream read timeout: {}", e);
+                    continue;
+                }
                 let mut buffer = [0; 1024];
 
                 match stream.read(&mut buffer) {
-                    Ok(_) => {
-                        let request = String::from_utf8_lossy(&buffer[..]);
+                    Ok(0) => {
+                        error!("client disconnected before sending a request");
+                    }
+                    Ok(bytes_read) => {
+                        let request = String::from_utf8_lossy(&buffer[..bytes_read]);
                         let request_line = request.lines().next().unwrap_or("");
                         let path = request_line
                             .strip_prefix("GET ")
@@ -98,6 +125,8 @@ pub fn run_server(
             Err(e) => error!("failed to accept requestor: {}", e),
         }
     }
+
+    log::info!("http server stopped");
 
     Ok(())
 }

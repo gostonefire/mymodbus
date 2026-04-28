@@ -9,6 +9,9 @@ anyhow = "1"
 log = "0.4"
 signal-hook = "0.4"
 
+[target.'cfg(windows)'.dependencies]
+ctrlc = "3.5"
+
 [profile.release]
 opt-level = "z"
 lto = true
