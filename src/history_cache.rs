@@ -1,11 +1,16 @@
+//! In-memory cache for historical power samples
+//!
+//! Provides a rolling window of recent power data for fast retrieval.
+
 use std::collections::VecDeque;
 use std::sync::RwLock;
 use log::debug;
 use crate::poller::PowerSample;
 
+/// Unix timestamp in seconds
 pub type UnixTs = u64;
 
-/// In-memory rolling cache for the most recent samples.
+/// In-memory rolling cache for the most recent samples
 ///
 /// Intended for fast range queries over the last 48 hours.
 pub struct HistoryCache {
@@ -14,7 +19,11 @@ pub struct HistoryCache {
 }
 
 impl HistoryCache {
-    /// Create an empty cache with the given retention window in seconds.
+    /// Create an empty cache with the given retention window in seconds
+    ///
+    /// # Arguments
+    ///
+    /// * `retention_secs` - the number of seconds to keep samples in the cache
     pub fn new(retention_secs: u64) -> Self {
         Self {
             inner: RwLock::new(VecDeque::new()),
@@ -22,7 +31,11 @@ impl HistoryCache {
         }
     }
 
-    /// Insert one sample and prune anything older than the retention window.
+    /// Insert one sample and prune anything older than the retention window
+    ///
+    /// # Arguments
+    ///
+    /// * `sample` - the power sample to insert
     pub fn insert(&self, sample: PowerSample) {
         let mut guard = self.inner.write().unwrap();
         guard.push_back(sample);
@@ -31,7 +44,12 @@ impl HistoryCache {
     }
 
 
-    /// Query samples in the inclusive range `[from_ts, to_ts]`.
+    /// Query samples in the inclusive range `[from_ts, to_ts]`
+    ///
+    /// # Arguments
+    ///
+    /// * `from_ts` - the start of the range (inclusive)
+    /// * `to_ts` - the end of the range (inclusive)
     pub fn query(&self, from_ts: UnixTs, to_ts: UnixTs) -> Vec<PowerSample> {
         if from_ts > to_ts {
             return Vec::new();
@@ -45,6 +63,12 @@ impl HistoryCache {
             .collect()
     }
 
+    /// Prunes samples older than the retention window from the queue
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - the queue to prune
+    /// * `now_ts` - the current timestamp in seconds
     fn prune_locked(&self, queue: &mut VecDeque<PowerSample>, now_ts: u64) {
         let cutoff = now_ts.saturating_sub(self.retention_secs);
 

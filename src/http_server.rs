@@ -1,3 +1,7 @@
+//! HTTP server for the Mymodbus application
+//!
+//! Provides an API to query Modbus registers and historical data.
+
 use anyhow::{anyhow, Result};
 use log::error;
 use std::io::{Read, Write};
@@ -12,6 +16,15 @@ use crate::poller::PowerSample;
 const HTTP_RESPONSE: &str =
     "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n";
 
+/// Runs the HTTP server
+///
+/// # Arguments
+///
+/// * `bind_address` - IP address to bind the server to
+/// * `bind_port` - port to bind the server to
+/// * `tx_request` - channel to send Modbus requests
+/// * `rx_shutdown` - channel to receive shutdown signal
+/// * `history_cache` - shared history cache for historical data queries
 pub fn run_server(
     bind_address: IpAddr,
     bind_port: u16,
@@ -131,6 +144,11 @@ pub fn run_server(
     Ok(())
 }
 
+/// Helper function to format a Modbus register value as an HTTP response
+///
+/// # Arguments
+///
+/// * `data` - the result of a Modbus register read
 fn http_response(data: Result<RegisterValue>) -> String {
     let value = match data {
         Ok(data) => match data {
@@ -146,17 +164,13 @@ fn http_response(data: Result<RegisterValue>) -> String {
     format!("{}{{\"data\": {}}}", HTTP_RESPONSE, value)
 }
 
-/// Query the in-memory history cache and return a JSON string.
+/// Query the in-memory history cache and return a JSON string
 ///
-/// The result shape is:
-/// {
-///   "from_ts": 123,
-///   "to_ts": 456,
-///   "truncated": false,
-///   "samples": [
-///     {"ts": 123, "produced": 1.2, "consumed": 0.8}
-///   ]
-/// }
+/// # Arguments
+///
+/// * `history_cache` - shared history cache to query
+/// * `from_ts` - start timestamp for the query
+/// * `to_ts` - end timestamp for the query
 pub fn handle_history_query_json(
     history_cache: Arc<HistoryCache>,
     from_ts: u64,
@@ -170,6 +184,14 @@ pub fn handle_history_query_json(
     Ok(history_response_json(from_ts, to_ts, false, &samples))
 }
 
+/// Helper function to format historical data as a JSON string
+///
+/// # Arguments
+///
+/// * `from_ts` - start timestamp of the data
+/// * `to_ts` - end timestamp of the data
+/// * `truncated` - whether the data was truncated
+/// * `samples` - the historical power samples
 fn history_response_json(
     from_ts: u64,
     to_ts: u64,

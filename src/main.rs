@@ -1,3 +1,7 @@
+//! Entry point for the Mymodbus application
+//!
+//! This module initializes the system, spawns necessary threads, and starts the HTTP server.
+
 mod manager_modbus;
 mod registers;
 mod initialization;
@@ -19,6 +23,8 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
+/// Main entry point of the application
+///
 fn main() -> Result<()> {
     let config = config()?;
 

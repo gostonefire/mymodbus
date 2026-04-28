@@ -1,3 +1,7 @@
+//! Data poller for Modbus registers
+//!
+//! This module periodically polls defined Modbus registers and stores the results in a history cache.
+
 use anyhow::Result;
 use log::{error, info};
 use std::sync::mpsc;
@@ -8,14 +12,30 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::history_cache::HistoryCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest};
 
+/// A snapshot of power metrics at a specific point in time
+///
 #[derive(Copy, Clone)]
 pub struct PowerSample {
+    /// Unix timestamp in seconds
     pub ts: u64,
+    /// Energy produced in kWh
     pub produced: f64,
+    /// Energy consumed in kWh
     pub consumed: f64,
+    /// Energy exported in kWh
     pub exported: f64,
 }
 
+/// Spawns a new poller thread
+///
+/// # Arguments
+///
+/// * `tx_request` - channel to send Modbus requests
+/// * `rx_shutdown` - channel to receive shutdown signal
+/// * `cache` - shared history cache to store samples
+/// * `produced_id` - register ID for produced energy
+/// * `consumed_id` - register ID for consumed energy
+/// * `exported_id` - register ID for exported energy
 pub fn spawn_poller(
     tx_request: mpsc::Sender<ModbusRequest>,
     rx_shutdown: mpsc::Receiver<()>,
@@ -58,6 +78,15 @@ pub fn spawn_poller(
     })
 }
 
+/// Performs a single polling cycle
+///
+/// # Arguments
+///
+/// * `tx_request` - channel to send Modbus requests
+/// * `cache` - history cache to store the result
+/// * `produced_id` - register ID for produced energy
+/// * `consumed_id` - register ID for consumed energy
+/// * `exported_id` - register ID for exported energy
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,

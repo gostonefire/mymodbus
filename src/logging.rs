@@ -1,7 +1,6 @@
 //! Logging implementation for Mymodbus
 //!
 //! Provides a simple thread-safe logger that writes to both a file and optionally stdout.
-//! It implements the `log::Log` trait and includes custom timestamp formatting.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};

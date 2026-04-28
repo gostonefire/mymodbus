@@ -1,3 +1,6 @@
+//! This module handles the application initialization and configuration parsing.
+//!
+
 use std::{env, fs};
 use log::LevelFilter;
 use crate::logging::setup_logger;

@@ -1,3 +1,7 @@
+//! Shutdown listener for the Mymodbus application
+//!
+//! Handles OS signals and Ctrl+C to trigger a graceful shutdown.
+
 use anyhow::Result;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -7,6 +11,11 @@ use signal_hook::consts::signal::{SIGINT, SIGTERM};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
 
+/// Spawns a thread that listens for shutdown signals
+///
+/// # Arguments
+///
+/// * `tx_shutdown` - channel to send the shutdown signal to the main thread
 pub fn spawn_shutdown_listener(tx_shutdown: Sender<()>) -> Result<thread::JoinHandle<()>> {
     #[cfg(unix)]
     {

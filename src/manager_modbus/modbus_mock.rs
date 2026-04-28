@@ -1,3 +1,7 @@
+//! Mock Modbus serial port
+//!
+//! Provides an in-memory mock implementation of a serial port for testing Modbus communication.
+
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::time::Duration;
@@ -16,11 +20,8 @@ const MOCK_TIMEOUT: Duration = Duration::from_millis(300);
 const MOCK_SLAVE_ID: u8 = 247;
 const MOCK_FUNCTION_READ_HOLDING: u8 = 0x04;
 
-/// Mock implementation of a Modbus RTU serial port.
+/// Mock implementation of a Modbus RTU serial port
 ///
-/// The mock stores register values in memory. When your Modbus client writes
-/// a valid read request, the mock prepares a valid Modbus RTU response,
-/// including CRC. The next call to `read()` returns that response.
 #[derive(Debug, Clone)]
 pub struct MockSerialPort {
     registers: HashMap<u16, u16>,
@@ -40,10 +41,8 @@ impl Default for MockSerialPort {
 }
 
 impl MockSerialPort {
-    /// Create a mock serial port with some useful sample register values.
+    /// Create a new mock serial port with default values
     ///
-    /// Adjust these defaults to match addresses from your register setup,
-    /// or construct the mock with `with_registers`.
     pub fn new() -> Self {
         let mut registers = HashMap::new();
 
@@ -73,7 +72,11 @@ impl MockSerialPort {
         msp
     }
 
-    /// Create a mock serial port from explicit register values.
+    /// Create a mock serial port from explicit register values
+    ///
+    /// # Arguments
+    ///
+    /// * `registers` - an iterator of address/value pairs
     pub fn with_registers(registers: impl IntoIterator<Item = (u16, u16)>) -> Self {
         Self {
             registers: registers.into_iter().collect(),
@@ -81,27 +84,44 @@ impl MockSerialPort {
         }
     }
 
-    /// Set or replace a single 16-bit register value.
+    /// Set or replace a single 16-bit register value
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the register address
+    /// * `value` - the 16-bit value to store
     pub fn set_register(&mut self, address: u16, value: u16) {
         self.registers.insert(address, value);
     }
 
-    /// Store a `u32` across two consecutive registers, high word first.
+    /// Store a `u32` across two consecutive registers, high word first
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    /// * `value` - the 32-bit value to store
     pub fn set_u32(&mut self, address: u16, value: u32) {
         self.registers.insert(address, (value >> 16) as u16);
         self.registers.insert(address + 1, (value & 0xFFFF) as u16);
     }
 
-    /// Store an `i32` across two consecutive registers, high word first.
+    /// Store an `i32` across two consecutive registers, high word first
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    /// * `value` - the 32-bit value to store
     pub fn set_i32(&mut self, address: u16, value: i32) {
         self.set_u32(address, value as u32);
     }
 
-    /// Store a string as big-endian `u16` Modbus registers.
+    /// Store a string as big-endian `u16` Modbus registers
     ///
-    /// Each register holds two bytes. If the string is shorter than the requested
-    /// register count, it is padded with zero bytes. If it is longer, it is
-    /// truncated.
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    /// * `value` - the string value to store
+    /// * `register_count` - the number of registers to use
     pub fn set_string(&mut self, address: u16, value: &str, register_count: u16) {
         let mut bytes = value.as_bytes().to_vec();
         bytes.resize(register_count as usize * 2, 0);
@@ -113,6 +133,11 @@ impl MockSerialPort {
         }
     }
 
+    /// Handle a Modbus request and prepare a response
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - the received request frame
     fn handle_request(&mut self, request: &[u8]) {
         self.pending_response.clear();
 
@@ -176,6 +201,13 @@ impl MockSerialPort {
         self.pending_response = response;
     }
 
+    /// Create a Modbus exception response
+    ///
+    /// # Arguments
+    ///
+    /// * `slave` - the slave ID
+    /// * `function` - the function code
+    /// * `code` - the exception code
     fn exception_response(slave: u8, function: u8, code: u8) -> Vec<u8> {
         let mut response = vec![slave, function | 0x80, code];
         let crc = modbus_crc16(&response);
@@ -318,18 +350,28 @@ impl SerialPort for MockSerialPort {
     }
 }
 
-/// Build a boxed mock port for easy use from `Modbus::new`.
+/// Create a boxed mock serial port with default registers
+///
 pub fn boxed_mock_port() -> Box<dyn SerialPort> {
     Box::new(MockSerialPort::new())
 }
 
-/// Build a boxed mock port from explicit register values.
+/// Create a boxed mock serial port with explicit registers
+///
+/// # Arguments
+///
+/// * `registers` - an iterator of address/value pairs
 pub fn boxed_mock_port_with_registers(
     registers: impl IntoIterator<Item = (u16, u16)>,
 ) -> Box<dyn SerialPort> {
     Box::new(MockSerialPort::with_registers(registers))
 }
 
+/// Calculate the Modbus RTU CRC16 checksum
+///
+/// # Arguments
+///
+/// * `data` - the byte slice to calculate the CRC for
 fn modbus_crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
 

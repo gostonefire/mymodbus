@@ -1,9 +1,6 @@
-//! # Modbus RTU Manager
+//! Modbus RTU implementation
 //!
-//! This module provides the core logic for communicating with Modbus RTU devices
-//! over a serial port. It includes traits for reading different data types from
-//! registers, a `Modbus` client for managing the connection, and helper functions
-//! for frame building and parsing.
+//! Handles communication with Modbus RTU devices over serial ports.
 
 use std::fmt::Debug;
 use std::sync::mpsc;
@@ -24,16 +21,16 @@ const OVERALL_TIMEOUT: Duration = Duration::from_millis(500);
 const SLAVE_ID: u8 = 247;
 const FUNCTION_READ_HOLDING: u8 = 0x04;
 
-/// Trait for types that can be read from Modbus registers.
+/// Trait for types that can be read from Modbus registers
 pub trait ModbusRead: Sized {
-    /// The number of registers to read for this type.
+    /// The number of registers to read for this type
     const REG_COUNT: u16;
 
-    /// Combine the read registers into the target type.
+    /// Combine the read registers into the target type
     ///
     /// # Arguments
     ///
-    /// * `regs` - A slice of 16-bit registers read from the device.
+    /// * `regs` - a slice of 16-bit registers read from the device
     fn from_registers(regs: &[u16]) -> Result<Self>;
 }
 
@@ -72,23 +69,29 @@ impl ModbusRead for i32 {
     }
 }
 
+/// Modbus client for managing the serial connection
+///
 pub struct Modbus {
     port: Box<dyn SerialPort>,
 }
 
+/// Mode of the Modbus port
+///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModbusPortMode {
+    /// Real serial port
     Real,
+    /// In-memory mock port
     Mock,
 }
 
 impl Modbus {
-    /// Create a new Modbus client.
+    /// Create a new Modbus client
     ///
     /// # Arguments
     ///
-    /// * `serial_port` - The serial port to connect to.
-    /// * `mode` - Whether to use a real serial port or an in-memory mock.
+    /// * `serial_port` - the serial port to connect to
+    /// * `mode` - whether to use a real serial port or an in-memory mock
     pub fn new(serial_port: &str, mode: ModbusPortMode) -> Result<Self> {
         let port: Box<dyn SerialPort> = match mode {
             ModbusPortMode::Real => serialport::new(serial_port, BAUD)
@@ -105,27 +108,29 @@ impl Modbus {
         Ok(Modbus { port })
     }
 
-    /// Create a new Modbus client backed by an already constructed port.
+    /// Create a new Modbus client backed by an already constructed port
     ///
-    /// This is useful for tests that need custom mock register values.
+    /// # Arguments
+    ///
+    /// * `port` - the serial port to use
     pub fn with_port(port: Box<dyn SerialPort>) -> Self {
         Self { port }
     }
 
-    /// Get metadata for a register by its unique identifier.
+    /// Get metadata for a register by its unique identifier
     ///
     /// # Arguments
     ///
-    /// * `unique_id` - The identifier of the register.
+    /// * `unique_id` - the identifier of the register
     pub fn get_register_info(&self, unique_id: &str) -> Option<&'static RegisterInfo> {
         crate::registers::get_register(unique_id)
     }
 
-    /// Read a register by its unique identifier and return a typed value.
+    /// Read a register by its unique identifier and return a typed value
     ///
     /// # Arguments
     ///
-    /// * `unique_id` - The identifier of the register.
+    /// * `unique_id` - the identifier of the register
     pub fn read_register_by_id_typed(&mut self, unique_id: &str) -> Result<RegisterValue> {
         let info = self
             .get_register_info(unique_id)
@@ -143,12 +148,12 @@ impl Modbus {
         }
     }
 
-    /// Read a sequence of registers and interpret them as a UTF-8 string.
+    /// Read a sequence of registers and interpret them as a UTF-8 string
     ///
     /// # Arguments
     ///
-    /// * `address` - The starting register address.
-    /// * `count` - The number of registers to read.
+    /// * `address` - the starting register address
+    /// * `count` - the number of registers to read
     fn read_register_string(&mut self, address: u16, count: u16) -> Result<String> {
         let request = build_read_holding_request(SLAVE_ID, address, count);
 
@@ -178,11 +183,11 @@ impl Modbus {
     }
 
     
-    /// Read one or more registers from the Modbus device and combine them into type T.
+    /// Read one or more registers from the Modbus device and combine them into type T
     ///
     /// # Arguments
     ///
-    /// * `address` - The starting register address.
+    /// * `address` - the starting register address
     pub fn read_register<T: ModbusRead + Debug>(&mut self, address: u16) -> Result<T> {
         let count = T::REG_COUNT;
         let request = build_read_holding_request(SLAVE_ID, address, count);
@@ -201,9 +206,8 @@ impl Modbus {
         Ok(value)
     }
 
-    /// Read an RTU response from the serial port.
+    /// Read an RTU response from the serial port
     ///
-    /// This method uses a heuristic to detect the end of the frame.
     fn read_modbus_rtu_response(&mut self) -> Result<Vec<u8>> {
         let start = Instant::now();
         let mut buf = Vec::with_capacity(256);
@@ -247,21 +251,21 @@ impl Modbus {
     }
 }
 
-/// Represents a value read from a Modbus register.
+/// Represents a value read from a Modbus register
 #[derive(Debug, Clone)]
 pub enum RegisterValue {
-    /// A 16-bit unsigned integer.
+    /// A 16-bit unsigned integer
     U16((u16, Option<f64>, Option<u8>)),
-    /// A 32-bit unsigned integer (occupies two registers).
+    /// A 32-bit unsigned integer (occupies two registers)
     U32((u32, Option<f64>, Option<u8>)),
-    /// A 32-bit signed integer (occupies two registers).
+    /// A 32-bit signed integer (occupies two registers)
     I32((i32, Option<f64>, Option<u8>)),
-    /// A UTF-8 string.
+    /// A UTF-8 string
     String(String),
 }
 
 impl RegisterValue {
-    /// Convert a register value to an f64 using optional scaling and precision.
+    /// Convert a register value to an f64 using optional scaling and precision
     ///
     pub fn to_f64(&self) -> Result<f64> {
 
@@ -284,20 +288,24 @@ impl RegisterValue {
     }
 }
 
+/// Represents a request to read a Modbus register
 #[derive(Debug, Clone)]
 pub enum RegisterRequest {
+    /// Request by unique ID
     UniqueId(String),
+    /// Request by raw address and type
     Raw(String),
+    /// Request to exit the Modbus manager
     Exit,
 }
 
-/// Build a Modbus RTU Read Holding Registers request frame.
+/// Build a Modbus RTU Read Holding Registers request frame
 ///
 /// # Arguments
 ///
-/// * `slave` - The slave ID.
-/// * `start` - The starting register address.
-/// * `count` - The number of registers to read.
+/// * `slave` - the slave ID
+/// * `start` - the starting register address
+/// * `count` - the number of registers to read
 fn build_read_holding_request(slave: u8, start: u16, count: u16) -> Vec<u8> {
     let mut frame = vec![
         slave,
@@ -314,13 +322,13 @@ fn build_read_holding_request(slave: u8, start: u16, count: u16) -> Vec<u8> {
 }
 
 
-/// Parse a Modbus RTU Read Holding Registers response frame.
+/// Parse a Modbus RTU Read Holding Registers response frame
 ///
 /// # Arguments
 ///
-/// * `frame` - The received RTU frame.
-/// * `expected_slave` - The expected slave ID.
-/// * `expected_regs` - The expected number of registers.
+/// * `frame` - the received RTU frame
+/// * `expected_slave` - the expected slave ID
+/// * `expected_regs` - the expected number of registers
 fn parse_read_holding_response(frame: &[u8], expected_slave: u8, expected_regs: u16) -> Result<Vec<u16>> {
     if frame.len() < 5 {
         return Err(anyhow!("frame too short"));
@@ -372,11 +380,11 @@ fn parse_read_holding_response(frame: &[u8], expected_slave: u8, expected_regs: 
     Ok(regs)
 }
 
-/// Calculate the Modbus RTU CRC16 checksum.
+/// Calculate the Modbus RTU CRC16 checksum
 ///
 /// # Arguments
 ///
-/// * `data` - The byte slice to calculate the CRC for.
+/// * `data` - the byte slice to calculate the CRC for
 fn modbus_crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
 
@@ -394,18 +402,23 @@ fn modbus_crc16(data: &[u8]) -> u16 {
     crc
 }
 
+/// Container for a Modbus request and its response channel
+///
 #[derive(Debug)]
 pub struct ModbusRequest {
+    /// The register request to perform
     pub request: RegisterRequest,
+    /// The channel to send the result back through
     pub response: mpsc::Sender<Result<RegisterValue>>,
 }
 
-/// Starts and withholds a message loop that reads requests from the channel and sends responses.
+/// Starts the Modbus manager message loop
 ///
 /// # Arguments
 ///
-/// * 'port' - serial port for communication with the Modbus device.
-/// * 'rx' - request channel
+/// * `port` - serial port for communication with the Modbus device
+/// * `rx` - request channel
+/// * `mode` - the port mode (Real or Mock)
 pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>, mode: ModbusPortMode) -> Result<()> {
     let mut modbus = Modbus::new(&port, mode)?;
 
@@ -448,7 +461,12 @@ pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>, mode: ModbusPortMode
     }
 }
 
-/// Send one Modbus request and wait for its reply.
+/// Send one Modbus request and wait for its reply
+///
+/// # Arguments
+///
+/// * `tx` - the request channel
+/// * `request` - the register request to send
 pub fn send_request(
     tx: &mpsc::Sender<ModbusRequest>,
     request: RegisterRequest,
@@ -461,7 +479,11 @@ pub fn send_request(
     response_rx.recv()?
 }
 
-/// Send an exit request to the Modbus worker.
+/// Send an exit request to the Modbus manager
+///
+/// # Arguments
+///
+/// * `tx` - the request channel
 pub fn send_exit(tx: &mpsc::Sender<ModbusRequest>) -> Result<()> {
     let (response_tx, _response_rx) = mpsc::channel();
     tx.send(ModbusRequest {
@@ -475,7 +497,7 @@ pub fn send_exit(tx: &mpsc::Sender<ModbusRequest>) -> Result<()> {
 ///
 /// # Arguments
 ///
-/// * 's' - Raw request string
+/// * `s` - raw request string
 fn split_addr_type(s: &str) -> Option<(&str, &str)> {
     let idx = s.find(|c: char| !c.is_ascii_digit())?;
     Some((&s[..idx], &s[idx..]))
