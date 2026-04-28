@@ -2,7 +2,7 @@ use std::{env, fs};
 use log::LevelFilter;
 use crate::logging::setup_logger;
 use anyhow::{anyhow, Context, Result};
-
+use crate::manager_modbus::ModbusPortMode;
 
 /// Configuration parameters for the web server
 ///
@@ -18,6 +18,8 @@ pub struct WebServerParameters {
 pub struct ModbusParameters {
     /// the serial port to connect to
     pub serial_port: String,
+    /// whether the client will connect to the modbus server or not
+    pub mock: ModbusPortMode,
 }
 
 /// General configuration parameters for the application
@@ -46,8 +48,7 @@ struct PartialConfig {
     web_server_bind_address: Option<String>,
     web_server_bind_port: Option<u16>,
     modbus_serial_port: Option<String>,
-    general_journal_path: Option<String>,
-    general_snapshot_path: Option<String>,
+    modbus_mock: Option<ModbusPortMode>,
     general_log_path: Option<String>,
     general_log_level: Option<LevelFilter>,
     general_log_to_stdout: Option<bool>,
@@ -61,8 +62,7 @@ impl PartialConfig {
             web_server_bind_address: None,
             web_server_bind_port: None,
             modbus_serial_port: None,
-            general_journal_path: None,
-            general_snapshot_path: None,
+            modbus_mock: None,
             general_log_path: None,
             general_log_level: None,
             general_log_to_stdout: None,
@@ -80,6 +80,7 @@ impl PartialConfig {
             },
             modbus: ModbusParameters {
                 serial_port: Self::require(self.modbus_serial_port, "modbus.serial_port")?,
+                mock: Self::require(self.modbus_mock, "modbus.mock")?,
             },
             general: General {
                 log_path: Self::require(self.general_log_path, "general.log_path")?,
@@ -167,11 +168,8 @@ fn parse_config(text: &str) -> Result<Config> {
             "modbus.serial_port" => {
                 partial.modbus_serial_port = Some(value.to_string());
             }
-            "general.journal_path" => {
-                partial.general_journal_path = Some(value.to_string());
-            }
-            "general.snapshot_path" => {
-                partial.general_snapshot_path = Some(value.to_string());
+            "modbus.mock" => {
+                partial.modbus_mock = Some(port_mode(parse_value(value, key, line_number)?));
             }
             "general.log_path" => {
                 partial.general_log_path = Some(value.to_string());
@@ -232,5 +230,18 @@ fn parse_log_level(value: &str, line_number: usize) -> Result<LevelFilter> {
             "line {}: invalid value for general.log_level: {}",
             line_number, value
         )),
+    }
+}
+
+/// Translate a boolean value to ModbusPortMode
+///
+/// # Arguments
+///
+/// * 'mock' - the boolean value to translate
+fn port_mode(mock: bool) -> ModbusPortMode {
+    if mock {
+        ModbusPortMode::Mock
+    } else {
+        ModbusPortMode::Real
     }
 }

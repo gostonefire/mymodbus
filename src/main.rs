@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     });
 
     let modbus_handle = thread::spawn(move || {
-        if let Err(r) = run(config.modbus.serial_port, rx_request, ModbusPortMode::Mock) {
+        if let Err(r) = run(config.modbus.serial_port, rx_request, config.modbus.mock) {
             error!("modbus error: {}", r);
         }
     });
