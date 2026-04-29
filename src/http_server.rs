@@ -9,9 +9,8 @@ use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
-use crate::history_cache::HistoryCache;
+use crate::history_cache::{power_deltas, HistoryCache, PowerDelta};
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
-use crate::poller::PowerSample;
 
 const HTTP_RESPONSE: &str =
     "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n";
@@ -99,18 +98,21 @@ pub fn run_server(
                                 let query = path.split_once('?').map(|(_, query)| query).unwrap_or("");
                                 let mut from_ts: Option<u64> = None;
                                 let mut to_ts: Option<u64> = None;
+                                let mut interval: Option<u64> = None;
 
                                 for part in query.split('&').filter(|s| !s.is_empty()) {
                                     if let Some(value) = part.strip_prefix("from_ts=") {
                                         from_ts = value.parse::<u64>().ok();
                                     } else if let Some(value) = part.strip_prefix("to_ts=") {
                                         to_ts = value.parse::<u64>().ok();
+                                    } else if let Some(value) = part.strip_prefix("interval=") {
+                                        interval = value.parse::<u64>().ok();
                                     }
                                 }
 
                                 match (from_ts, to_ts) {
                                     (Some(from_ts), Some(to_ts)) => {
-                                        handle_history_query_json(history_cache.clone(), from_ts, to_ts)
+                                        handle_history_query_json(history_cache.clone(), from_ts, to_ts, interval)
                                             .map(|json| format!("{}{}", HTTP_RESPONSE, json))
                                     }
                                     _ => Err(anyhow!(
@@ -171,17 +173,20 @@ fn http_response(data: Result<RegisterValue>) -> String {
 /// * `history_cache` - shared history cache to query
 /// * `from_ts` - start timestamp for the query
 /// * `to_ts` - end timestamp for the query
+/// * `interval` - interval between samples in minutes (i.e., bucket size)
 pub fn handle_history_query_json(
     history_cache: Arc<HistoryCache>,
     from_ts: u64,
     to_ts: u64,
+    interval: Option<u64>,
 ) -> Result<String> {
     if from_ts > to_ts {
         return Err(anyhow!("invalid range: from_ts must be <= to_ts"));
     }
 
     let samples = history_cache.query(from_ts, to_ts);
-    Ok(history_response_json(from_ts, to_ts, false, &samples))
+    let values = power_deltas(&samples, Duration::from_secs(interval.unwrap_or(5) * 60));
+    Ok(history_response_json(from_ts, to_ts, false, &values))
 }
 
 /// Helper function to format historical data as a JSON string
@@ -196,7 +201,7 @@ fn history_response_json(
     from_ts: u64,
     to_ts: u64,
     truncated: bool,
-    samples: &[PowerSample],
+    samples: &[PowerDelta],
 ) -> String {
     let mut out = String::new();
 

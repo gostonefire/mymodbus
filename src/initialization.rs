@@ -25,6 +25,13 @@ pub struct ModbusParameters {
     pub mock: ModbusPortMode,
 }
 
+/// configuration parameters for the cache
+///
+pub struct CacheParameters {
+    /// the number of hours to keep samples in the cache
+    pub in_memory_hours: u64,
+}
+
 /// General configuration parameters for the application
 ///
 pub struct General {
@@ -41,6 +48,7 @@ pub struct General {
 pub struct Config {
     pub web_server: WebServerParameters,
     pub modbus: ModbusParameters,
+    pub cache: CacheParameters,
     pub general: General,
 }
 
@@ -52,6 +60,7 @@ struct PartialConfig {
     web_server_bind_port: Option<u16>,
     modbus_serial_port: Option<String>,
     modbus_mock: Option<ModbusPortMode>,
+    cache_in_memory_hours: Option<u64>,
     general_log_path: Option<String>,
     general_log_level: Option<LevelFilter>,
     general_log_to_stdout: Option<bool>,
@@ -66,6 +75,7 @@ impl PartialConfig {
             web_server_bind_port: None,
             modbus_serial_port: None,
             modbus_mock: None,
+            cache_in_memory_hours: None,
             general_log_path: None,
             general_log_level: None,
             general_log_to_stdout: None,
@@ -84,6 +94,9 @@ impl PartialConfig {
             modbus: ModbusParameters {
                 serial_port: Self::require(self.modbus_serial_port, "modbus.serial_port")?,
                 mock: Self::require(self.modbus_mock, "modbus.mock")?,
+            },
+            cache: CacheParameters {
+                in_memory_hours: Self::require(self.cache_in_memory_hours, "cache.in_memory_hours")?,
             },
             general: General {
                 log_path: Self::require(self.general_log_path, "general.log_path")?,
@@ -173,6 +186,9 @@ fn parse_config(text: &str) -> Result<Config> {
             }
             "modbus.mock" => {
                 partial.modbus_mock = Some(port_mode(parse_value(value, key, line_number)?));
+            }
+            "cache.in_memory_hours" => {
+                partial.cache_in_memory_hours = Some(parse_value(value, key, line_number)?);
             }
             "general.log_path" => {
                 partial.general_log_path = Some(value.to_string());

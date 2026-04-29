@@ -12,18 +12,21 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::history_cache::HistoryCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest};
 
-/// A snapshot of power metrics at a specific point in time
+/// A snapshot of power metrics at a specific point in time.
+///
+/// Values are stored in kWh, unscaled. The standard scale for these values is 0.1 with
+/// a precision of 1 decimal place.
 ///
 #[derive(Copy, Clone)]
 pub struct PowerSample {
     /// Unix timestamp in seconds
     pub ts: u64,
     /// Energy produced in kWh
-    pub produced: f64,
+    pub produced: u32,
     /// Energy consumed in kWh
-    pub consumed: f64,
+    pub consumed: u32,
     /// Energy exported in kWh
-    pub exported: f64,
+    pub exported: u32,
 }
 
 /// Spawns a new poller thread
@@ -95,12 +98,11 @@ fn poll_once(
     exported_id: &str,
 ) -> Result<()> {
     let produced = send_request(tx_request, RegisterRequest::UniqueId(produced_id.to_string()))?
-        .to_f64()?;
+        .to_u32()?;
     let consumed = send_request(tx_request, RegisterRequest::UniqueId(consumed_id.to_string()))?
-        .to_f64()?;
-
+        .to_u32()?;
     let exported = send_request(tx_request, RegisterRequest::UniqueId(exported_id.to_string()))?
-        .to_f64()?;
+        .to_u32()?;
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 

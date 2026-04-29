@@ -66,9 +66,9 @@ impl MockSerialPort {
             stop_bits: MOCK_STOP_BITS,
         };
 
-        msp.set_i32(32000, 20000); // pv_energy_total
-        msp.set_i32(32009, 10000); // feed_in_energy_total
-        msp.set_i32(32021, 30000); // load_energy_total
+        msp.set_u32(32000, 20000); // pv_energy_total
+        msp.set_u32(32009, 10000); // feed_in_energy_total
+        msp.set_u32(32021, 30000); // load_energy_total
         msp
     }
 
@@ -103,6 +103,28 @@ impl MockSerialPort {
     pub fn set_u32(&mut self, address: u16, value: u32) {
         self.registers.insert(address, (value >> 16) as u16);
         self.registers.insert(address + 1, (value & 0xFFFF) as u16);
+    }
+
+    /// Read a `u32` value from two consecutive registers, high word first
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    fn get_u32(&self, address: u16) -> u32 {
+        let high = self.registers.get(&address).copied().unwrap_or(0) as u32;
+        let low = self.registers.get(&(address + 1)).copied().unwrap_or(0) as u32;
+
+        (high << 16) | low
+    }
+
+    /// Increment a `u32` value stored at the given address, with saturating add
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    fn increment_u32(&mut self, address: u16) {
+        let value = self.get_u32(address);
+        self.set_u32(address, value.saturating_add(1));
     }
 
     /// Store an `i32` across two consecutive registers, high word first
@@ -199,6 +221,11 @@ impl MockSerialPort {
         response.push((crc >> 8) as u8);
 
         self.pending_response = response;
+        
+        // Increase power samples to simulate real-world behavior
+        self.increment_u32(32000); // pv_energy_total
+        self.increment_u32(32009); // feed_in_energy_total
+        self.increment_u32(32021); // load_energy_total
     }
 
     /// Create a Modbus exception response

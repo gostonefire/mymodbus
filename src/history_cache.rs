@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::sync::RwLock;
+use std::time::Duration;
 use log::debug;
 use crate::poller::PowerSample;
 
@@ -80,4 +81,110 @@ impl HistoryCache {
             }
         }
     }
+}
+
+/// Energy represented during one time bucket.
+///
+/// Values are in kWh for the period ending at `ts`.
+#[derive(Debug, Copy, Clone)]
+pub struct PowerDelta {
+    /// Unix timestamp in seconds, normally the end of the bucket
+    pub ts: UnixTs,
+    /// Energy produced during this bucket in kWh
+    pub produced: f64,
+    /// Energy consumed during this bucket in kWh
+    pub consumed: f64,
+    /// Energy exported during this bucket in kWh
+    pub exported: f64,
+}
+
+/// Convert absolute cumulative samples into per-period deltas.
+///
+/// `bucket_size` defines the wanted period, for example:
+/// - `Duration::from_secs(60)` for 1 minute
+/// - `Duration::from_secs(5 * 60)` for 5 minutes
+/// - `Duration::from_secs(15 * 60)` for 15 minutes
+/// - `Duration::from_secs(60 * 60)` for 1 hour
+///
+/// Samples are grouped by truncated bucket start. The first bucket is used as
+/// the baseline. Each following bucket returns the difference between the last
+/// sample in that bucket and the last sample in the previous bucket.
+///
+/// For example, with 5-minute buckets:
+///
+/// - a sample at `16:34:58` belongs to bucket `16:30:00`
+/// - a sample at `16:39:58` belongs to bucket `16:35:00`
+///
+/// The returned delta for the second bucket gets `ts = 16:35:00`.
+pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<PowerDelta> {
+    let bucket_secs = bucket_size.as_secs();
+
+    if samples.len() < 2 || bucket_secs == 0 {
+        return Vec::new();
+    }
+
+    let mut sorted = samples.to_vec();
+    sorted.sort_by_key(|sample| sample.ts);
+
+    let mut result = Vec::new();
+
+    let mut previous_bucket_start = align_to_bucket(sorted[0].ts, bucket_secs);
+    let mut previous_bucket_last = sorted[0];
+
+    let mut current_bucket_start = previous_bucket_start;
+    let mut current_bucket_last = previous_bucket_last;
+
+    for sample in sorted.into_iter().skip(1) {
+        let sample_bucket_start = align_to_bucket(sample.ts, bucket_secs);
+
+        if sample_bucket_start == current_bucket_start {
+            current_bucket_last = sample;
+            continue;
+        }
+
+        if current_bucket_start != previous_bucket_start {
+            if let Some(mut delta) = delta_between(previous_bucket_last, current_bucket_last) {
+                delta.ts = current_bucket_start;
+                result.push(delta);
+            }
+
+            previous_bucket_last = current_bucket_last;
+            previous_bucket_start = current_bucket_start;
+        } else {
+            previous_bucket_last = current_bucket_last;
+            previous_bucket_start = current_bucket_start;
+        }
+
+        current_bucket_start = sample_bucket_start;
+        current_bucket_last = sample;
+    }
+
+    if current_bucket_start != previous_bucket_start {
+        if let Some(mut delta) = delta_between(previous_bucket_last, current_bucket_last) {
+            delta.ts = current_bucket_start;
+            result.push(delta);
+        }
+    }
+
+    result
+}
+
+fn align_to_bucket(ts: UnixTs, bucket_secs: u64) -> UnixTs {
+    ts - ts % bucket_secs
+}
+
+fn delta_between(previous: PowerSample, current: PowerSample) -> Option<PowerDelta> {
+    Some(PowerDelta {
+        ts: current.ts,
+        produced: checked_energy_delta(previous.produced, current.produced)?,
+        consumed: checked_energy_delta(previous.consumed, current.consumed)?,
+        exported: checked_energy_delta(previous.exported, current.exported)?,
+    })
+}
+fn checked_energy_delta(previous: u32, current: u32) -> Option<f64> {
+    if current < previous {
+        return None;
+    }
+
+    Some((current - previous) as f64 * 0.1)
 }

@@ -286,6 +286,21 @@ impl RegisterValue {
             None => value,
         })
     }
+
+    /// Return the raw numeric value as a u32.
+    ///
+    /// String values cannot be converted. Negative i32 values are rejected.
+    pub fn to_u32(&self) -> Result<u32> {
+        match self {
+            RegisterValue::U16((data, _, _)) => Ok(*data as u32),
+            RegisterValue::U32((data, _, _)) => Ok(*data),
+            RegisterValue::I32((data, _, _)) => {
+                u32::try_from(*data)
+                    .map_err(|_| anyhow!("Cannot convert negative i32 to u32: {data}"))
+            }
+            RegisterValue::String(_) => Err(anyhow!("Cannot convert string to u32")),
+        }
+    }
 }
 
 /// Represents a request to read a Modbus register
