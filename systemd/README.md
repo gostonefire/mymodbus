@@ -8,16 +8,17 @@
 Output should be something like:
 ```
 ● mymodbus.service - Modbus reader for Raspberry Pi Zero 2 W
-     Loaded: loaded (/lib/systemd/system/mymodbus.service; enabled; preset: enabled)
-     Active: active (running) since Fri 2025-07-25 12:09:48 CEST; 47s ago
-   Main PID: 510 (bash)
-      Tasks: 3 (limit: 173)
-        CPU: 41ms
+     Loaded: loaded (/usr/lib/systemd/system/mymodbus.service; enabled; preset: enabled)
+     Active: active (running) since Wed 2026-04-29 18:51:45 CEST; 7s ago
+ Invocation: 2738993e280847cbbef6a2e2c3ec02ac
+   Main PID: 48518 (bash)
+      Tasks: 6 (limit: 176)
+        CPU: 66ms
      CGroup: /system.slice/mymodbus.service
-             ├─510 /bin/bash /home/petste/mymodbus/start.sh
-             └─518 /home/petste/MyModbus/mymodbus --config=/home/petste/MyModbus/config/mymodbus.conf
+             ├─48518 /bin/bash /home/petste/MyModbus/start.sh
+             └─48519 /home/petste/MyModbus/mymodbus --config=/home/petste/MyModbus/config/mymodbus.conf
 
-Jul 25 12:09:48 zeroeast systemd[1]: Started mymodbus.service - Modbus reader for Raspberry Pi Zero 2 W.
+Apr 29 18:51:45 zeroshed systemd[1]: Started mymodbus.service - Modbus reader for Raspberry Pi Zero 2 W.
 ```
 
 If the application for some reason prints anything to stdout/stderr, such in case of a panic,
