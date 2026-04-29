@@ -19,7 +19,7 @@ use signal_hook::iterator::Signals;
 pub fn spawn_shutdown_listener(tx_shutdown: Sender<()>) -> Result<thread::JoinHandle<()>> {
     #[cfg(unix)]
     {
-        let signals = Signals::new([SIGTERM, SIGINT])?;
+        let mut signals = Signals::new([SIGTERM, SIGINT])?;
 
         let handle = thread::spawn(move || {
             for _sig in signals.forever() {
