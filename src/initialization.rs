@@ -30,6 +30,9 @@ pub struct ModbusParameters {
 pub struct CacheParameters {
     /// the number of hours to keep samples in the cache
     pub in_memory_hours: u64,
+    pub persistence_path: String,
+    pub persistence_days: u64,
+    pub persistence_rotate_samples: u64,
 }
 
 /// General configuration parameters for the application
@@ -61,6 +64,9 @@ struct PartialConfig {
     modbus_serial_port: Option<String>,
     modbus_mock: Option<ModbusPortMode>,
     cache_in_memory_hours: Option<u64>,
+    cache_persistence_path: Option<String>,
+    cache_persistence_days: Option<u64>,
+    cache_persistence_rotate_samples: Option<u64>,
     general_log_path: Option<String>,
     general_log_level: Option<LevelFilter>,
     general_log_to_stdout: Option<bool>,
@@ -76,6 +82,9 @@ impl PartialConfig {
             modbus_serial_port: None,
             modbus_mock: None,
             cache_in_memory_hours: None,
+            cache_persistence_path: None,
+            cache_persistence_days: None,
+            cache_persistence_rotate_samples: None,
             general_log_path: None,
             general_log_level: None,
             general_log_to_stdout: None,
@@ -97,6 +106,9 @@ impl PartialConfig {
             },
             cache: CacheParameters {
                 in_memory_hours: Self::require(self.cache_in_memory_hours, "cache.in_memory_hours")?,
+                persistence_path: Self::require(self.cache_persistence_path, "cache.persistence_path")?,
+                persistence_days: Self::require(self.cache_persistence_days, "cache.persistence_days")?,
+                persistence_rotate_samples: Self::require(self.cache_persistence_rotate_samples, "cache.persistence_rotate_samples")?,
             },
             general: General {
                 log_path: Self::require(self.general_log_path, "general.log_path")?,
@@ -189,6 +201,15 @@ fn parse_config(text: &str) -> Result<Config> {
             }
             "cache.in_memory_hours" => {
                 partial.cache_in_memory_hours = Some(parse_value(value, key, line_number)?);
+            }
+            "cache.persistence_path" => {
+                partial.cache_persistence_path = Some(value.to_string());
+            }
+            "cache.persistence_days" => {
+                partial.cache_persistence_days = Some(parse_value(value, key, line_number)?);
+            }
+            "cache.persistence_rotate_samples" => {
+                partial.cache_persistence_rotate_samples = Some(parse_value(value, key, line_number)?);
             }
             "general.log_path" => {
                 partial.general_log_path = Some(value.to_string());

@@ -1,0 +1,16 @@
+[Unit]
+Description=Modbus reader for Raspberry Pi Zero 2 W
+After=network-online.target
+
+[Service]
+ExecStart=/bin/bash /home/petste/MyModbus/start.sh
+WorkingDirectory=/home/petste/MyModbus/
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+RestartSec=30
+User=petste
+
+[Install]
+WantedBy=multi-user.target
+

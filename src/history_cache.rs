@@ -32,6 +32,36 @@ impl HistoryCache {
         }
     }
 
+    /// Return the configured retention window in seconds.
+    /// 
+    pub fn retention_secs(&self) -> u64 {
+        self.retention_secs
+    }
+
+    /// Insert samples restored from persistence.
+    ///
+    /// Samples are sorted by timestamp before insertion. The cache is then pruned
+    /// using the newest restored timestamp.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `samples` - the power samples to insert
+    pub fn insert_many(&self, mut samples: Vec<PowerSample>) {
+        if samples.is_empty() {
+            return;
+        }
+
+        samples.sort_by_key(|sample| sample.ts);
+
+        let newest_ts = samples.last().map(|sample| sample.ts).unwrap_or(0);
+
+        let mut guard = self.inner.write().unwrap();
+        guard.extend(samples);
+        self.prune_locked(&mut guard, newest_ts);
+
+        debug!("restored samples, cache size: {}", guard.len());
+    }
+    
     /// Insert one sample and prune anything older than the retention window
     ///
     /// # Arguments
@@ -100,12 +130,6 @@ pub struct PowerDelta {
 
 /// Convert absolute cumulative samples into per-period deltas.
 ///
-/// `bucket_size` defines the wanted period, for example:
-/// - `Duration::from_secs(60)` for 1 minute
-/// - `Duration::from_secs(5 * 60)` for 5 minutes
-/// - `Duration::from_secs(15 * 60)` for 15 minutes
-/// - `Duration::from_secs(60 * 60)` for 1 hour
-///
 /// Samples are grouped by truncated bucket start. The first bucket is used as
 /// the baseline. Each following bucket returns the difference between the last
 /// sample in that bucket and the last sample in the previous bucket.
@@ -116,6 +140,11 @@ pub struct PowerDelta {
 /// - a sample at `16:39:58` belongs to bucket `16:35:00`
 ///
 /// The returned delta for the second bucket gets `ts = 16:35:00`.
+///
+/// # Arguments
+///
+/// * `samples` - the absolute cumulative power samples to process
+/// * `bucket_size` - the duration of each time bucket (e.g., 5 minutes, 1 hour)
 pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<PowerDelta> {
     let bucket_secs = bucket_size.as_secs();
 
@@ -169,10 +198,22 @@ pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<Power
     result
 }
 
+/// Align a timestamp to the start of a bucket
+///
+/// # Arguments
+///
+/// * `ts` - the Unix timestamp to align
+/// * `bucket_secs` - the size of the bucket in seconds
 fn align_to_bucket(ts: UnixTs, bucket_secs: u64) -> UnixTs {
     ts - ts % bucket_secs
 }
 
+/// Calculate the delta between two power samples
+///
+/// # Arguments
+///
+/// * `previous` - the baseline power sample
+/// * `current` - the current power sample
 fn delta_between(previous: PowerSample, current: PowerSample) -> Option<PowerDelta> {
     Some(PowerDelta {
         ts: current.ts,
@@ -181,6 +222,14 @@ fn delta_between(previous: PowerSample, current: PowerSample) -> Option<PowerDel
         exported: checked_energy_delta(previous.exported, current.exported)?,
     })
 }
+/// Calculate the energy delta between two values in kWh
+///
+/// Returns None if the current value is less than the previous value (e.g. counter reset).
+///
+/// # Arguments
+///
+/// * `previous` - the previous energy value in 0.1 kWh units
+/// * `current` - the current energy value in 0.1 kWh units
 fn checked_energy_delta(previous: u32, current: u32) -> Option<f64> {
     if current < previous {
         return None;

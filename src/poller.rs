@@ -4,13 +4,14 @@
 
 use anyhow::Result;
 use log::{error, info};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::history_cache::HistoryCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest};
+use crate::persistence::Persistence;
 
 /// A snapshot of power metrics at a specific point in time.
 ///
@@ -36,6 +37,7 @@ pub struct PowerSample {
 /// * `tx_request` - channel to send Modbus requests
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `cache` - shared history cache to store samples
+/// * `persistence` - shared persistence to store samples
 /// * `produced_id` - register ID for produced energy
 /// * `consumed_id` - register ID for consumed energy
 /// * `exported_id` - register ID for exported energy
@@ -43,6 +45,7 @@ pub fn spawn_poller(
     tx_request: mpsc::Sender<ModbusRequest>,
     rx_shutdown: mpsc::Receiver<()>,
     cache: Arc<HistoryCache>,
+    persistence: Arc<Mutex<Persistence>>,
     produced_id: String,
     consumed_id: String,
     exported_id: String,
@@ -71,10 +74,21 @@ pub fn spawn_poller(
                 next_tick = Instant::now();
             }
 
-            match poll_once(&tx_request, &cache, &produced_id, &consumed_id, &exported_id) {
+            match poll_once(
+                &tx_request,
+                &cache,
+                &persistence,
+                &produced_id,
+                &consumed_id,
+                &exported_id,
+            ) {
                 Ok(()) => info!("polling cycle completed"),
                 Err(err) => error!("polling cycle failed: {err}"),
             }
+        }
+
+        if let Err(err) = persistence.lock().unwrap().flush() {
+            error!("failed to flush persistence during poller shutdown: {err}");
         }
 
         info!("poller stopped");
@@ -87,12 +101,14 @@ pub fn spawn_poller(
 ///
 /// * `tx_request` - channel to send Modbus requests
 /// * `cache` - history cache to store the result
+/// * `persistence` - persistence to store the result
 /// * `produced_id` - register ID for produced energy
 /// * `consumed_id` - register ID for consumed energy
 /// * `exported_id` - register ID for exported energy
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
+    persistence: &Arc<Mutex<Persistence>>,
     produced_id: &str,
     consumed_id: &str,
     exported_id: &str,
@@ -114,5 +130,7 @@ fn poll_once(
     };
 
     cache.insert(sample);
+    persistence.lock().unwrap().append(sample)?;
+
     Ok(())
 }

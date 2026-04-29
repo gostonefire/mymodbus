@@ -10,6 +10,7 @@ mod http_server;
 mod shutdown;
 mod poller;
 mod history_cache;
+mod persistence;
 
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;
@@ -18,10 +19,12 @@ use crate::manager_modbus::{run, send_exit, ModbusRequest};
 use crate::poller::spawn_poller;
 use crate::shutdown::spawn_shutdown_listener;
 use anyhow::Result;
-use log::error;
-use std::sync::mpsc;
+use log::{error, warn};
+use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::persistence::Persistence;
 
 /// Main entry point of the application
 ///
@@ -53,10 +56,33 @@ fn main() -> Result<()> {
         config.cache.in_memory_hours * 60 * 60,
     ));
 
+    let persistence = Arc::new(Mutex::new(Persistence::new(
+        config.cache.persistence_path.parse()?,
+        config.cache.persistence_rotate_samples,
+        Duration::from_secs(config.cache.persistence_days * 24 * 60 * 60),
+    )?));
+
+    {
+        let persistence_guard = persistence.lock().unwrap();
+
+        if let Err(err) = persistence_guard.cleanup_old_files() {
+            warn!("persistence cleanup failed: {err}");
+        }
+
+        let now_ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let cutoff_ts = now_ts.saturating_sub(history_cache.retention_secs());
+
+        match persistence_guard.load_since(cutoff_ts) {
+            Ok(samples) => history_cache.insert_many(samples),
+            Err(err) => warn!("failed to restore persisted history cache: {err}"),
+        }
+    }
+
     let poller_handle = spawn_poller(
         tx_request.clone(),
         rx_poller_shutdown,
         history_cache.clone(),
+        persistence.clone(),
         "pv_energy_total".to_string(),
         "load_energy_total".to_string(),
         "feed_in_energy_total".to_string(),
@@ -70,6 +96,7 @@ fn main() -> Result<()> {
         history_cache.clone(),
     );
 
+    let _ = persistence.lock().unwrap().flush();
     let _ = send_exit(&tx_request);
     let _ = modbus_handle.join();
     let _ = poller_handle.join();
