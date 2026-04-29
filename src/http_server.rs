@@ -12,9 +12,12 @@ use std::time::Duration;
 use crate::history_cache::{power_deltas, HistoryCache, PowerDelta};
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
 
-const HTTP_RESPONSE: &str =
-    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n";
-
+/// Formats a JSON response
+///
+/// # Arguments
+///
+/// * `status` - the HTTP status line (e.g., "200 OK")
+/// * `body` - the JSON body of the response
 fn json_response(status: &str, body: String) -> String {
     format!(
         "HTTP/1.1 {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -24,6 +27,11 @@ fn json_response(status: &str, body: String) -> String {
     )
 }
 
+/// Formats an empty HTTP response
+///
+/// # Arguments
+///
+/// * `status` - the HTTP status line (e.g., "204 No Content")
 fn empty_response(status: &str) -> String {
     format!(
         "HTTP/1.1 {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -72,7 +80,9 @@ pub fn run_server(
         }
 
         match listener.accept() {
-            Ok((mut stream, _addr)) => {
+            Ok((mut stream, addr)) => {
+                log::debug!("accepted http connection from {}", addr);
+
                 if let Err(e) = stream.set_nonblocking(false) {
                     error!("failed to set http client stream to blocking mode: {}", e);
                     continue;
@@ -86,11 +96,13 @@ pub fn run_server(
 
                 match stream.read(&mut buffer) {
                     Ok(0) => {
-                        error!("client disconnected before sending a request");
+                        log::debug!("client {} disconnected before sending a request", addr);
                     }
                     Ok(bytes_read) => {
                         let request = String::from_utf8_lossy(&buffer[..bytes_read]);
                         let request_line = request.lines().next().unwrap_or("");
+                        log::debug!("request from {}: {}", addr, request_line);
+
                         let path = request_line
                             .strip_prefix("GET ")
                             .and_then(|rest| rest.split_whitespace().next());
@@ -135,11 +147,11 @@ pub fn run_server(
                                 match (from_ts, to_ts) {
                                     (Some(from_ts), Some(to_ts)) => {
                                         handle_history_query_json(history_cache.clone(), from_ts, to_ts, interval)
-                                            .map(|json| format!("{}{}", HTTP_RESPONSE, json))
+                                            .map(|json| json_response("200 OK", json))
                                     }
                                     _ => Err(anyhow!(
-                                            "invalid request: /history requires from_ts and to_ts query parameters"
-                                        )),
+                                                "invalid request: /history requires from_ts and to_ts query parameters"
+                                            )),
                                 }
                             }
                             _ => Err(anyhow!("unsupported request")),
@@ -154,12 +166,12 @@ pub fn run_server(
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        log::debug!("client stream had no data available before timeout");
+                        log::debug!("client {} had no data available before timeout", addr);
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                        log::debug!("client timed out before sending a request");
+                        log::debug!("client {} timed out before sending a request", addr);
                     }
-                    Err(e) => error!("failed to read from stream: {}", e),
+                    Err(e) => error!("failed to read from client {} stream: {}", addr, e),
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
