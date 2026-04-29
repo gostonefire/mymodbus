@@ -15,6 +15,22 @@ use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, Regist
 const HTTP_RESPONSE: &str =
     "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n";
 
+fn json_response(status: &str, body: String) -> String {
+    format!(
+        "HTTP/1.1 {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        body.len(),
+        body
+    )
+}
+
+fn empty_response(status: &str) -> String {
+    format!(
+        "HTTP/1.1 {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        status
+    )
+}
+
 /// Runs the HTTP server
 ///
 /// # Arguments
@@ -80,6 +96,12 @@ pub fn run_server(
                             .and_then(|rest| rest.split_whitespace().next());
 
                         let response = match path {
+                            Some("/") => {
+                                Ok(json_response("200 OK", "{\"status\":\"ok\"}".to_string()))
+                            }
+                            Some("/favicon.ico") => {
+                                Ok(empty_response("204 No Content"))
+                            }
                             Some(path) if path.starts_with("/id/") => {
                                 let value = path.trim_start_matches("/id/").trim_end_matches('/');
                                 Ok(http_response(send_request(
@@ -124,12 +146,18 @@ pub fn run_server(
                         };
 
                         let body = response.unwrap_or_else(|e| {
-                            format!("{}{{\"error\":\"{}\"}}", HTTP_RESPONSE, e)
+                            json_response("400 Bad Request", format!("{{\"error\":\"{}\"}}", e))
                         });
 
-                        if let Err(e) = stream.write(body.as_bytes()) {
+                        if let Err(e) = stream.write_all(body.as_bytes()) {
                             error!("could not write to stream: {}", e);
                         }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        log::debug!("client stream had no data available before timeout");
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                        log::debug!("client timed out before sending a request");
                     }
                     Err(e) => error!("failed to read from stream: {}", e),
                 }
@@ -154,16 +182,16 @@ pub fn run_server(
 fn http_response(data: Result<RegisterValue>) -> String {
     let value = match data {
         Ok(data) => match data {
-            RegisterValue::String(value) => value,
+            RegisterValue::String(value) => format!("\"{}\"", value),
             _ => data
                 .to_f64()
                 .map(|v| v.to_string())
-                .unwrap_or_else(|e| e.to_string()),
+                .unwrap_or_else(|e| format!("\"{}\"", e)),
         },
-        Err(e) => e.to_string(),
+        Err(e) => format!("\"{}\"", e),
     };
 
-    format!("{}{{\"data\": {}}}", HTTP_RESPONSE, value)
+    json_response("200 OK", format!("{{\"data\": {}}}", value))
 }
 
 /// Query the in-memory history cache and return a JSON string
