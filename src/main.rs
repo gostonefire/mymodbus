@@ -11,6 +11,7 @@ mod shutdown;
 mod poller;
 mod history_cache;
 mod persistence;
+pub mod handlers;
 
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;

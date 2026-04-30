@@ -3,41 +3,18 @@
 //! Provides an API to query Modbus registers and historical data.
 
 use anyhow::{anyhow, Result};
-use log::error;
+use log::{error, debug, info};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
-use crate::history_cache::{power_deltas, HistoryCache, PowerDelta};
-use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest, RegisterValue};
+use crate::handlers::{
+    handle_address, handle_bad_request, handle_empty, handle_favicon, handle_history, handle_id,
+};
+use crate::history_cache::HistoryCache;
+use crate::manager_modbus::ModbusRequest;
 
-/// Formats a JSON response
-///
-/// # Arguments
-///
-/// * `status` - the HTTP status line (e.g., "200 OK")
-/// * `body` - the JSON body of the response
-fn json_response(status: &str, body: String) -> String {
-    format!(
-        "HTTP/1.1 {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        status,
-        body.len(),
-        body
-    )
-}
-
-/// Formats an empty HTTP response
-///
-/// # Arguments
-///
-/// * `status` - the HTTP status line (e.g., "204 No Content")
-fn empty_response(status: &str) -> String {
-    format!(
-        "HTTP/1.1 {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        status
-    )
-}
 
 /// Runs the HTTP server
 ///
@@ -57,7 +34,7 @@ pub fn run_server(
 ) -> Result<()> {
     let socket_addr = SocketAddr::new(bind_address, bind_port);
 
-    log::info!("starting http server on {}", socket_addr);
+    info!("starting http server on {}", socket_addr);
 
     let listener = TcpListener::bind(socket_addr)
         .map_err(|e| {
@@ -71,17 +48,17 @@ pub fn run_server(
             e
         })?;
 
-    log::info!("http server listening on {}", socket_addr);
+    info!("http server listening on {}", socket_addr);
 
     loop {
         if rx_shutdown.try_recv().is_ok() {
-            log::info!("shutdown requested, stopping http server");
+            info!("shutdown requested, stopping http server");
             break;
         }
 
         match listener.accept() {
             Ok((mut stream, addr)) => {
-                log::debug!("accepted http connection from {}", addr);
+                debug!("accepted http connection from {}", addr);
 
                 if let Err(e) = stream.set_nonblocking(false) {
                     error!("failed to set http client stream to blocking mode: {}", e);
@@ -96,12 +73,12 @@ pub fn run_server(
 
                 match stream.read(&mut buffer) {
                     Ok(0) => {
-                        log::debug!("client {} disconnected before sending a request", addr);
+                        debug!("client {} disconnected before sending a request", addr);
                     }
                     Ok(bytes_read) => {
                         let request = String::from_utf8_lossy(&buffer[..bytes_read]);
                         let request_line = request.lines().next().unwrap_or("");
-                        log::debug!("request from {}: {}", addr, request_line);
+                        debug!("request from {}: {}", addr, request_line);
 
                         let path = request_line
                             .strip_prefix("GET ")
@@ -109,56 +86,25 @@ pub fn run_server(
 
                         let response = match path {
                             Some("/") => {
-                                Ok(json_response("200 OK", "{\"status\":\"ok\"}".to_string()))
+                                handle_empty()
                             }
                             Some("/favicon.ico") => {
-                                Ok(empty_response("204 No Content"))
+                                handle_favicon()
                             }
                             Some(path) if path.starts_with("/id/") => {
-                                let value = path.trim_start_matches("/id/").trim_end_matches('/');
-                                Ok(http_response(send_request(
-                                    &tx_request,
-                                    RegisterRequest::UniqueId(value.to_string()),
-                                )))
+                                handle_id(path, &tx_request)
                             }
                             Some(path) if path.starts_with("/address/") => {
-                                let value = path.trim_start_matches("/address/").trim_end_matches('/');
-                                Ok(http_response(send_request(
-                                    &tx_request,
-                                    RegisterRequest::Raw(value.to_string()),
-                                )))
+                                handle_address(path, &tx_request)
                             }
                             Some(path) if path.starts_with("/history") => {
-                                let query = path.split_once('?').map(|(_, query)| query).unwrap_or("");
-                                let mut from_ts: Option<u64> = None;
-                                let mut to_ts: Option<u64> = None;
-                                let mut interval: Option<u64> = None;
-
-                                for part in query.split('&').filter(|s| !s.is_empty()) {
-                                    if let Some(value) = part.strip_prefix("from_ts=") {
-                                        from_ts = value.parse::<u64>().ok();
-                                    } else if let Some(value) = part.strip_prefix("to_ts=") {
-                                        to_ts = value.parse::<u64>().ok();
-                                    } else if let Some(value) = part.strip_prefix("interval=") {
-                                        interval = value.parse::<u64>().ok();
-                                    }
-                                }
-
-                                match (from_ts, to_ts) {
-                                    (Some(from_ts), Some(to_ts)) => {
-                                        handle_history_query_json(history_cache.clone(), from_ts, to_ts, interval)
-                                            .map(|json| json_response("200 OK", json))
-                                    }
-                                    _ => Err(anyhow!(
-                                                "invalid request: /history requires from_ts and to_ts query parameters"
-                                            )),
-                                }
+                                handle_history(path, history_cache.clone())
                             }
                             _ => Err(anyhow!("unsupported request")),
                         };
 
                         let body = response.unwrap_or_else(|e| {
-                            json_response("400 Bad Request", format!("{{\"error\":\"{}\"}}", e))
+                            handle_bad_request(e)
                         });
 
                         if let Err(e) = stream.write_all(body.as_bytes()) {
@@ -166,10 +112,10 @@ pub fn run_server(
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        log::debug!("client {} had no data available before timeout", addr);
+                        debug!("client {} had no data available before timeout", addr);
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                        log::debug!("client {} timed out before sending a request", addr);
+                        debug!("client {} timed out before sending a request", addr);
                     }
                     Err(e) => error!("failed to read from client {} stream: {}", addr, e),
                 }
@@ -181,86 +127,7 @@ pub fn run_server(
         }
     }
 
-    log::info!("http server stopped");
+    info!("http server stopped");
 
     Ok(())
-}
-
-/// Helper function to format a Modbus register value as an HTTP response
-///
-/// # Arguments
-///
-/// * `data` - the result of a Modbus register read
-fn http_response(data: Result<RegisterValue>) -> String {
-    let value = match data {
-        Ok(data) => match data {
-            RegisterValue::String(value) => format!("\"{}\"", value),
-            _ => data
-                .to_f64()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|e| format!("\"{}\"", e)),
-        },
-        Err(e) => format!("\"{}\"", e),
-    };
-
-    json_response("200 OK", format!("{{\"data\": {}}}", value))
-}
-
-/// Query the in-memory history cache and return a JSON string
-///
-/// # Arguments
-///
-/// * `history_cache` - shared history cache to query
-/// * `from_ts` - start timestamp for the query
-/// * `to_ts` - end timestamp for the query
-/// * `interval` - interval between samples in minutes (i.e., bucket size)
-pub fn handle_history_query_json(
-    history_cache: Arc<HistoryCache>,
-    from_ts: u64,
-    to_ts: u64,
-    interval: Option<u64>,
-) -> Result<String> {
-    if from_ts > to_ts {
-        return Err(anyhow!("invalid range: from_ts must be <= to_ts"));
-    }
-
-    let samples = history_cache.query(from_ts, to_ts);
-    let values = power_deltas(&samples, Duration::from_secs(interval.unwrap_or(5) * 60));
-    Ok(history_response_json(from_ts, to_ts, false, &values))
-}
-
-/// Helper function to format historical data as a JSON string
-///
-/// # Arguments
-///
-/// * `from_ts` - start timestamp of the data
-/// * `to_ts` - end timestamp of the data
-/// * `truncated` - whether the data was truncated
-/// * `samples` - the historical power samples
-fn history_response_json(
-    from_ts: u64,
-    to_ts: u64,
-    truncated: bool,
-    samples: &[PowerDelta],
-) -> String {
-    let mut out = String::new();
-
-    out.push('{');
-    out.push_str(&format!("\"from_ts\":{},", from_ts));
-    out.push_str(&format!("\"to_ts\":{},", to_ts));
-    out.push_str(&format!("\"truncated\":{},", truncated));
-    out.push_str("\"samples\":[");
-
-    for (idx, sample) in samples.iter().enumerate() {
-        if idx > 0 {
-            out.push(',');
-        }
-        out.push_str(&format!(
-            "{{\"ts\":{},\"produced\":{},\"consumed\":{},\"exported\":{}}}",
-            sample.ts, sample.produced, sample.consumed, sample.exported
-        ));
-    }
-
-    out.push_str("]}");
-    out
 }
