@@ -74,23 +74,27 @@ impl HistoryCache {
         debug!("inserted sample, cache size: {}", guard.len());
     }
 
-    /// Query for cumulative power between a past value and current time.
+    /// Query for cumulative power between two values.
     ///
     /// # Arguments
     ///
-    /// * `from_ts` - the timestamp to query for
-    pub fn cumulative(&self, from_ts: UnixTs) -> Option<PowerSample> {
+    /// * `from_ts` - the start of the range (inclusive)
+    /// * `to_ts` - the end of the range (inclusive)
+    pub fn cumulative(&self, from_ts: UnixTs, to_ts: UnixTs) -> Option<PowerDelta> {
         let guard = self.inner.read().unwrap();
 
-        let from_power = guard.iter().find(|sample| sample.ts >= from_ts).copied()?;
-        let last_power = guard.back().copied()?;
+        let (from_power, last_power) = guard
+            .iter()
+            .copied()
+            .take_while(|sample| sample.ts <= to_ts)
+            .fold((None, None), |(from_power, _), sample| {
+                (
+                    from_power.or_else(|| (sample.ts >= from_ts).then_some(sample)),
+                    Some(sample),
+                )
+            });
 
-        Some(PowerSample {
-            ts: last_power.ts,
-            produced: last_power.produced.checked_sub(from_power.produced)?,
-            consumed: last_power.consumed.checked_sub(from_power.consumed)?,
-            exported: last_power.exported.checked_sub(from_power.exported)?,
-        })
+        delta_between(from_power?, last_power?)
     }
 
     /// Query samples in the inclusive range `[from_ts, to_ts]`

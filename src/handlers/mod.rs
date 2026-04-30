@@ -15,6 +15,7 @@ pub mod history;
 pub mod favicon;
 pub mod empty;
 pub mod bad_request;
+pub mod cumulative;
 
 pub use id::handle_id;
 pub use address::handle_address;
@@ -68,6 +69,56 @@ fn http_response(data: anyhow::Result<RegisterValue>) -> String {
     };
 
     json_response("200 OK", format!("{{\"data\": {}}}", value))
+}
+
+/// Query the in-memory history cache and return a JSON string
+///
+/// # Arguments
+///
+/// * `history_cache` - shared history cache to query
+/// * `from_ts` - start timestamp for the query
+/// * `to_ts` - end timestamp for the query
+pub fn handle_history_cumulative_json(
+    history_cache: Arc<HistoryCache>,
+    from_ts: u64,
+    to_ts: u64,
+) -> anyhow::Result<String> {
+    if from_ts > to_ts {
+        return Err(anyhow!("invalid range: from_ts must be <= to_ts"));
+    }
+
+    let sample = history_cache.cumulative(from_ts, to_ts)
+        .ok_or(anyhow!("no sample found for range"))?;
+    
+    Ok(cumulative_response_json(from_ts, to_ts, sample))
+}
+
+/// Helper function to format cumulative data as a JSON string
+///
+/// # Arguments
+///
+/// * `from_ts` - start timestamp of the data
+/// * `to_ts` - end timestamp of the data
+/// * `sample` - the cumulative power sample
+fn cumulative_response_json(
+    from_ts: u64,
+    to_ts: u64,
+    sample: PowerDelta,
+) -> String {
+    let mut out = String::new();
+
+    out.push('{');
+    out.push_str(&format!("\"from_ts\":{},", from_ts));
+    out.push_str(&format!("\"to_ts\":{},", to_ts));
+    out.push_str("\"sample\":");
+
+    out.push_str(&format!(
+        "{{\"ts\":{},\"produced\":{},\"consumed\":{},\"exported\":{}}}",
+        sample.ts, sample.produced, sample.consumed, sample.exported
+    ));
+
+    out.push_str("}");
+    out
 }
 
 /// Query the in-memory history cache and return a JSON string
