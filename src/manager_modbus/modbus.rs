@@ -140,6 +140,16 @@ impl Modbus {
             "u16" | "uint16" => Ok(RegisterValue::U16((self.read_register::<u16>(info.address)?, info.scale, info.precision))),
             "u32" | "uint32" => Ok(RegisterValue::U32((self.read_register::<u32>(info.address)?, info.scale, info.precision))),
             "i32" | "int32" => Ok(RegisterValue::I32((self.read_register::<i32>(info.address)?, info.scale, info.precision))),
+            "sum_u16" => {
+                let count = info.count.ok_or_else(|| anyhow!("sum_u16 type requires count field"))?;
+                let regs = self.read_registers(info.address, count)?;
+                let sum = regs
+                    .iter()
+                    .fold(0u32, |acc, value| acc.saturating_add(*value as u32));
+
+                Ok(RegisterValue::U32((sum, info.scale, info.precision)))
+            }
+
             "string" => {
                 let count = info.count.ok_or_else(|| anyhow!("string type requires count field"))?;
                 Ok(RegisterValue::String(self.read_register_string(info.address, count)?))
@@ -182,7 +192,26 @@ impl Modbus {
         Ok(s)
     }
 
-    
+    /// Read a raw sequence of 16-bit registers from the Modbus device.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - the starting register address
+    /// * `count` - the number of registers to read
+    fn read_registers(&mut self, address: u16, count: u16) -> Result<Vec<u16>> {
+        let request = build_read_holding_request(SLAVE_ID, address, count);
+
+        // Clear stale bytes, then observe a quiet period before sending.
+        let _ = &self.port.clear(serialport::ClearBuffer::All);
+        std::thread::sleep(Duration::from_millis(5));
+
+        self.port.write_all(&request)?;
+        self.port.flush()?;
+
+        let response = &self.read_modbus_rtu_response()?;
+        parse_read_holding_response(&response, SLAVE_ID, count)
+    }
+
     /// Read one or more registers from the Modbus device and combine them into type T
     ///
     /// # Arguments
