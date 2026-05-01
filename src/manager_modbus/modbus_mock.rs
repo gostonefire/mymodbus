@@ -76,28 +76,6 @@ impl MockSerialPort {
         msp
     }
 
-    /// Create a mock serial port from explicit register values
-    ///
-    /// # Arguments
-    ///
-    /// * `registers` - an iterator of address/value pairs
-    pub fn with_registers(registers: impl IntoIterator<Item = (u16, u16)>) -> Self {
-        Self {
-            registers: registers.into_iter().collect(),
-            ..Self::new()
-        }
-    }
-
-    /// Set or replace a single 16-bit register value
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - the register address
-    /// * `value` - the 16-bit value to store
-    pub fn set_register(&mut self, address: u16, value: u16) {
-        self.registers.insert(address, value);
-    }
-
     /// Store a `u32` across two consecutive registers, high word first
     ///
     /// # Arguments
@@ -109,54 +87,14 @@ impl MockSerialPort {
         self.registers.insert(address + 1, (value & 0xFFFF) as u16);
     }
 
-    /// Read a `u32` value from two consecutive registers, high word first
+    /// Increment a `u16` value stored at the given address, with saturating add
     ///
     /// # Arguments
     ///
     /// * `address` - the starting register address
-    fn get_u32(&self, address: u16) -> u32 {
-        let high = self.registers.get(&address).copied().unwrap_or(0) as u32;
-        let low = self.registers.get(&(address + 1)).copied().unwrap_or(0) as u32;
-
-        (high << 16) | low
-    }
-
-    /// Increment a `u32` value stored at the given address, with saturating add
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - the starting register address
-    fn increment_u32(&mut self, address: u16) {
-        let value = self.get_u32(address);
-        self.set_u32(address, value.saturating_add(1));
-    }
-
-    /// Store an `i32` across two consecutive registers, high word first
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - the starting register address
-    /// * `value` - the 32-bit value to store
-    pub fn set_i32(&mut self, address: u16, value: i32) {
-        self.set_u32(address, value as u32);
-    }
-
-    /// Store a string as big-endian `u16` Modbus registers
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - the starting register address
-    /// * `value` - the string value to store
-    /// * `register_count` - the number of registers to use
-    pub fn set_string(&mut self, address: u16, value: &str, register_count: u16) {
-        let mut bytes = value.as_bytes().to_vec();
-        bytes.resize(register_count as usize * 2, 0);
-
-        for index in 0..register_count {
-            let byte_index = index as usize * 2;
-            let reg = u16::from_be_bytes([bytes[byte_index], bytes[byte_index + 1]]);
-            self.registers.insert(address + index, reg);
-        }
+    fn increment_u16(&mut self, address: u16) {
+        let value = self.registers.get(&address).copied().unwrap_or(0);
+        self.registers.insert(address, value.saturating_add(1));
     }
 
     /// Handle a Modbus request and prepare a response
@@ -227,9 +165,9 @@ impl MockSerialPort {
         self.pending_response = response;
         
         // Increase power samples to simulate real-world behavior
-        self.increment_u32(32000); // pv_energy_total
-        self.increment_u32(32009); // feed_in_energy_total
-        self.increment_u32(32021); // load_energy_total
+        self.increment_u16(31029); // load_power_R
+        self.increment_u16(31030); // load_power_S
+        self.increment_u16(31031); // load_power_T
     }
 
     /// Create a Modbus exception response
@@ -385,17 +323,6 @@ impl SerialPort for MockSerialPort {
 ///
 pub fn boxed_mock_port() -> Box<dyn SerialPort> {
     Box::new(MockSerialPort::new())
-}
-
-/// Create a boxed mock serial port with explicit registers
-///
-/// # Arguments
-///
-/// * `registers` - an iterator of address/value pairs
-pub fn boxed_mock_port_with_registers(
-    registers: impl IntoIterator<Item = (u16, u16)>,
-) -> Box<dyn SerialPort> {
-    Box::new(MockSerialPort::with_registers(registers))
 }
 
 /// Calculate the Modbus RTU CRC16 checksum

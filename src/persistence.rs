@@ -10,9 +10,9 @@
 //!
 //! Repeated records:
 //! - u64 timestamp, little endian
-//! - u32 produced, little endian
-//! - u32 consumed, little endian
-//! - u32 exported, little endian
+//! - f64 production, little endian
+//! - f64 consumption, little endian
+//! - f64 battery state of charge, little endian
 //!
 //! If the application crashes while writing, the last partial record is ignored
 //! during restore.
@@ -27,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::poller::PowerSample;
 
 const FILE_MAGIC: &[u8; 8] = b"MYMODB01";
-const RECORD_SIZE: usize = 24;
+const RECORD_SIZE: usize = 32;
 
 /// Append-only sample persistence.
 pub struct Persistence {
@@ -280,9 +280,8 @@ fn is_persistence_file(path: &Path) -> bool {
 /// * `sample` - the sample to encode and write
 fn write_sample<W: Write>(writer: &mut W, sample: PowerSample) -> Result<()> {
     writer.write_all(&sample.ts.to_le_bytes())?;
-    writer.write_all(&sample.produced.to_le_bytes())?;
-    writer.write_all(&sample.consumed.to_le_bytes())?;
-    writer.write_all(&sample.exported.to_le_bytes())?;
+    writer.write_all(&sample.production.to_le_bytes())?;
+    writer.write_all(&sample.consumption.to_le_bytes())?;
     writer.write_all(&sample.batt_soc.to_le_bytes())?;
     Ok(())
 }
@@ -332,16 +331,14 @@ fn read_samples_from_file(path: &Path) -> Result<Vec<PowerSample>> {
 /// * `record` - the 20-byte record to decode
 fn decode_sample(record: &[u8; RECORD_SIZE]) -> PowerSample {
     let ts = u64::from_le_bytes(record[0..8].try_into().unwrap());
-    let produced = u32::from_le_bytes(record[8..12].try_into().unwrap());
-    let consumed = u32::from_le_bytes(record[12..16].try_into().unwrap());
-    let exported = u32::from_le_bytes(record[16..20].try_into().unwrap());
-    let batt_soc = u32::from_le_bytes(record[20..24].try_into().unwrap());
+    let production = f64::from_le_bytes(record[8..16].try_into().unwrap());
+    let consumption = f64::from_le_bytes(record[16..24].try_into().unwrap());
+    let batt_soc = f64::from_le_bytes(record[24..32].try_into().unwrap());
 
     PowerSample {
         ts,
-        produced,
-        consumed,
-        exported,
+        production,
+        consumption,
         batt_soc,
     }
 }

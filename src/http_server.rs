@@ -12,7 +12,6 @@ use std::time::Duration;
 use crate::handlers::{
     handle_address, handle_bad_request, handle_empty, handle_favicon, handle_history, handle_id,
 };
-use crate::handlers::cumulative::handle_cumulative;
 use crate::history_cache::HistoryCache;
 use crate::manager_modbus::ModbusRequest;
 
@@ -100,9 +99,6 @@ pub fn run_server(
                             }
                             Some(path) if path.starts_with("/history") => {
                                 handle_history(path, history_cache.clone())
-                            }
-                            Some(path) if path.starts_with("/cumulative") => {
-                                handle_cumulative(path, history_cache.clone())
                             }
                             _ => Err(anyhow!("unsupported request")),
                         };

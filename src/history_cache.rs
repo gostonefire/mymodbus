@@ -74,29 +74,6 @@ impl HistoryCache {
         debug!("inserted sample, cache size: {}", guard.len());
     }
 
-    /// Query for cumulative power between two values.
-    ///
-    /// # Arguments
-    ///
-    /// * `from_ts` - the start of the range (inclusive)
-    /// * `to_ts` - the end of the range (inclusive)
-    pub fn cumulative(&self, from_ts: UnixTs, to_ts: UnixTs) -> Option<PowerDelta> {
-        let guard = self.inner.read().unwrap();
-
-        let (from_power, last_power) = guard
-            .iter()
-            .copied()
-            .take_while(|sample| sample.ts <= to_ts)
-            .fold((None, None), |(from_power, _), sample| {
-                (
-                    from_power.or_else(|| (sample.ts >= from_ts).then_some(sample)),
-                    Some(sample),
-                )
-            });
-
-        delta_between(from_power?, last_power?)
-    }
-
     /// Query samples in the inclusive range `[from_ts, to_ts]`
     ///
     /// # Arguments
@@ -135,44 +112,40 @@ impl HistoryCache {
     }
 }
 
-/// Energy represented during one time bucket.
+/// Average power represented during one time bucket.
 ///
-/// Values are in kWh for the period ending at `ts`.
+/// Power values are averaged from all samples in the bucket.
+/// Values are in their scaled real-world units.
 #[derive(Debug, Copy, Clone)]
-pub struct PowerDelta {
-    /// Unix timestamp in seconds, normally the end of the bucket
+pub struct PowerAverage {
+    /// Unix timestamp in seconds, normally the start of the bucket
     pub ts: UnixTs,
-    /// Energy produced during this bucket in kWh
-    pub produced: f64,
-    /// Energy consumed during this bucket in kWh
-    pub consumed: f64,
-    /// Energy exported during this bucket in kWh
-    pub exported: f64,
-    /// Battery state of charge in percent, 0-100
-    pub batt_soc: u32,
+    /// Average power production during this bucket
+    pub production: f64,
+    /// Average power consumption during this bucket
+    pub consumption: f64,
+    /// Average battery state of charge in percent, 0-100
+    pub batt_soc: f64,
 }
 
-/// Convert absolute cumulative samples into per-period deltas.
+/// Convert power samples into per-bucket average power values.
 ///
-/// Samples are grouped by truncated bucket start. The first bucket is used as
-/// the baseline. Each following bucket returns the difference between the last
-/// sample in that bucket and the last sample in the previous bucket.
+/// Samples are grouped by truncated bucket start. Each returned item contains
+/// the average values for all samples in that bucket.
 ///
 /// For example, with 5-minute buckets:
 ///
 /// - a sample at `16:34:58` belongs to bucket `16:30:00`
 /// - a sample at `16:39:58` belongs to bucket `16:35:00`
 ///
-/// The returned delta for the second bucket gets `ts = 16:35:00`.
-///
 /// # Arguments
 ///
-/// * `samples` - the absolute cumulative power samples to process
-/// * `bucket_size` - the duration of each time bucket (e.g., 5 minutes, 1 hour)
-pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<PowerDelta> {
+/// * `samples` - the power samples to process
+/// * `bucket_size` - the duration of each time bucket, e.g. 5 minutes or 1 hour
+pub fn power_average(samples: &[PowerSample], bucket_size: Duration) -> Vec<PowerAverage> {
     let bucket_secs = bucket_size.as_secs();
 
-    if samples.len() < 2 || bucket_secs == 0 {
+    if samples.is_empty() || bucket_secs == 0 {
         return Vec::new();
     }
 
@@ -181,42 +154,43 @@ pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<Power
 
     let mut result = Vec::new();
 
-    let mut previous_bucket_start = align_to_bucket(sorted[0].ts, bucket_secs);
-    let mut previous_bucket_last = sorted[0];
+    let mut current_bucket_start = align_to_bucket(sorted[0].ts, bucket_secs);
+    let mut production_sum = 0.0;
+    let mut consumption_sum = 0.0;
+    let mut batt_soc_sum = 0.0;
+    let mut sample_count: u64 = 0;
 
-    let mut current_bucket_start = previous_bucket_start;
-    let mut current_bucket_last = previous_bucket_last;
-
-    for sample in sorted.into_iter().skip(1) {
+    for sample in sorted {
         let sample_bucket_start = align_to_bucket(sample.ts, bucket_secs);
 
-        if sample_bucket_start == current_bucket_start {
-            current_bucket_last = sample;
-            continue;
+        if sample_bucket_start != current_bucket_start {
+            result.push(PowerAverage {
+                ts: current_bucket_start,
+                production: production_sum / sample_count as f64,
+                consumption: consumption_sum / sample_count as f64,
+                batt_soc: batt_soc_sum / sample_count as f64,
+            });
+
+            current_bucket_start = sample_bucket_start;
+            production_sum = 0.0;
+            consumption_sum = 0.0;
+            batt_soc_sum = 0.0;
+            sample_count = 0;
         }
 
-        if current_bucket_start != previous_bucket_start {
-            if let Some(mut delta) = delta_between(previous_bucket_last, current_bucket_last) {
-                delta.ts = current_bucket_start;
-                result.push(delta);
-            }
-
-            previous_bucket_last = current_bucket_last;
-            previous_bucket_start = current_bucket_start;
-        } else {
-            previous_bucket_last = current_bucket_last;
-            previous_bucket_start = current_bucket_start;
-        }
-
-        current_bucket_start = sample_bucket_start;
-        current_bucket_last = sample;
+        production_sum += sample.production;
+        consumption_sum += sample.consumption;
+        batt_soc_sum += sample.batt_soc;
+        sample_count += 1;
     }
 
-    if current_bucket_start != previous_bucket_start {
-        if let Some(mut delta) = delta_between(previous_bucket_last, current_bucket_last) {
-            delta.ts = current_bucket_start;
-            result.push(delta);
-        }
+    if sample_count > 0 {
+        result.push(PowerAverage {
+            ts: current_bucket_start,
+            production: production_sum / sample_count as f64,
+            consumption: consumption_sum / sample_count as f64,
+            batt_soc: batt_soc_sum / sample_count as f64,
+        });
     }
 
     result
@@ -230,35 +204,4 @@ pub fn power_deltas(samples: &[PowerSample], bucket_size: Duration) -> Vec<Power
 /// * `bucket_secs` - the size of the bucket in seconds
 fn align_to_bucket(ts: UnixTs, bucket_secs: u64) -> UnixTs {
     ts - ts % bucket_secs
-}
-
-/// Calculate the delta between two power samples
-///
-/// # Arguments
-///
-/// * `previous` - the baseline power sample
-/// * `current` - the current power sample
-fn delta_between(previous: PowerSample, current: PowerSample) -> Option<PowerDelta> {
-    Some(PowerDelta {
-        ts: current.ts,
-        produced: checked_energy_delta(previous.produced, current.produced)?,
-        consumed: checked_energy_delta(previous.consumed, current.consumed)?,
-        exported: checked_energy_delta(previous.exported, current.exported)?,
-        batt_soc: current.batt_soc,
-    })
-}
-/// Calculate the energy delta between two values in kWh
-///
-/// Returns None if the current value is less than the previous value (e.g. counter reset).
-///
-/// # Arguments
-///
-/// * `previous` - the previous energy value in 0.1 kWh units
-/// * `current` - the current energy value in 0.1 kWh units
-fn checked_energy_delta(previous: u32, current: u32) -> Option<f64> {
-    if current < previous {
-        return None;
-    }
-
-    Some((current - previous) as f64 * 0.1)
 }

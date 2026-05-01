@@ -84,9 +84,8 @@ fn main() -> Result<()> {
         rx_poller_shutdown,
         history_cache.clone(),
         persistence.clone(),
-        "pv_energy_total".to_string(),
-        "load_energy_total".to_string(),
-        "feed_in_energy_total".to_string(),
+        "pv1_power".to_string(),
+        "load_power".to_string(),
         "battery_soc".to_string(),
     );
 

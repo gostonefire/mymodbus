@@ -108,15 +108,6 @@ impl Modbus {
         Ok(Modbus { port })
     }
 
-    /// Create a new Modbus client backed by an already constructed port
-    ///
-    /// # Arguments
-    ///
-    /// * `port` - the serial port to use
-    pub fn with_port(port: Box<dyn SerialPort>) -> Self {
-        Self { port }
-    }
-
     /// Get metadata for a register by its unique identifier
     ///
     /// # Arguments

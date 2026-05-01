@@ -15,21 +15,18 @@ use crate::persistence::Persistence;
 
 /// A snapshot of power metrics at a specific point in time.
 ///
-/// Values are stored in kWh, unscaled. The standard scale for these values is 0.1 with
-/// a precision of 1 decimal place.
-///
+/// Power values are stored in their scaled real-world units, normally kW.
+/// Battery SoC is stored as percent.
 #[derive(Copy, Clone)]
 pub struct PowerSample {
     /// Unix timestamp in seconds
     pub ts: u64,
-    /// Energy produced in kWh
-    pub produced: u32,
-    /// Energy consumed in kWh
-    pub consumed: u32,
-    /// Energy exported in kWh
-    pub exported: u32,
+    /// Power production in kW
+    pub production: f64,
+    /// Power consumption in kW
+    pub consumption: f64,
     /// Battery state of charge, in percent
-    pub batt_soc: u32,
+    pub batt_soc: f64,
 }
 
 /// Spawns a new poller thread
@@ -40,18 +37,16 @@ pub struct PowerSample {
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `cache` - shared history cache to store samples
 /// * `persistence` - shared persistence to store samples
-/// * `produced_id` - register ID for produced energy
-/// * `consumed_id` - register ID for consumed energy
-/// * `exported_id` - register ID for exported energy
+/// * `production_id` - register ID for power production
+/// * `consumption_id` - register ID for power consumption
 /// * `batt_soc_id` - register ID for battery state of charge
 pub fn spawn_poller(
     tx_request: mpsc::Sender<ModbusRequest>,
     rx_shutdown: mpsc::Receiver<()>,
     cache: Arc<HistoryCache>,
     persistence: Arc<Mutex<Persistence>>,
-    produced_id: String,
-    consumed_id: String,
-    exported_id: String,
+    production_id: String,
+    consumption_id: String,
     batt_soc_id: String,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -82,9 +77,8 @@ pub fn spawn_poller(
                 &tx_request,
                 &cache,
                 &persistence,
-                &produced_id,
-                &consumed_id,
-                &exported_id,
+                &production_id,
+                &consumption_id,
                 &batt_soc_id,
             ) {
                 Ok(()) => info!("polling cycle completed"),
@@ -107,35 +101,30 @@ pub fn spawn_poller(
 /// * `tx_request` - channel to send Modbus requests
 /// * `cache` - history cache to store the result
 /// * `persistence` - persistence to store the result
-/// * `produced_id` - register ID for produced energy
-/// * `consumed_id` - register ID for consumed energy
-/// * `exported_id` - register ID for exported energy
+/// * `production_id` - register ID for power production
+/// * `consumption_id` - register ID for power consumption
 /// * `batt_soc_id` - register ID for battery state of charge
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
     persistence: &Arc<Mutex<Persistence>>,
-    produced_id: &str,
-    consumed_id: &str,
-    exported_id: &str,
+    production_id: &str,
+    consumption_id: &str,
     batt_soc_id: &str,
 ) -> Result<()> {
-    let produced = send_request(tx_request, RegisterRequest::UniqueId(produced_id.to_string()))?
-        .to_u32()?;
-    let consumed = send_request(tx_request, RegisterRequest::UniqueId(consumed_id.to_string()))?
-        .to_u32()?;
-    let exported = send_request(tx_request, RegisterRequest::UniqueId(exported_id.to_string()))?
-        .to_u32()?;
+    let production = send_request(tx_request, RegisterRequest::UniqueId(production_id.to_string()))?
+        .to_f64()?;
+    let consumption = send_request(tx_request, RegisterRequest::UniqueId(consumption_id.to_string()))?
+        .to_f64()?;
     let batt_soc = send_request(tx_request, RegisterRequest::UniqueId(batt_soc_id.to_string()))?
-        .to_u32()?;
+        .to_f64()?;
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
     let sample = PowerSample {
         ts,
-        produced,
-        consumed,
-        exported,
+        production,
+        consumption,
         batt_soc,
     };
 
