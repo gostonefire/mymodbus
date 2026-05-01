@@ -27,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::poller::PowerSample;
 
 const FILE_MAGIC: &[u8; 8] = b"MYMODB01";
-const RECORD_SIZE: usize = 20;
+const RECORD_SIZE: usize = 24;
 
 /// Append-only sample persistence.
 pub struct Persistence {
@@ -283,6 +283,7 @@ fn write_sample<W: Write>(writer: &mut W, sample: PowerSample) -> Result<()> {
     writer.write_all(&sample.produced.to_le_bytes())?;
     writer.write_all(&sample.consumed.to_le_bytes())?;
     writer.write_all(&sample.exported.to_le_bytes())?;
+    writer.write_all(&sample.batt_soc.to_le_bytes())?;
     Ok(())
 }
 
@@ -334,11 +335,13 @@ fn decode_sample(record: &[u8; RECORD_SIZE]) -> PowerSample {
     let produced = u32::from_le_bytes(record[8..12].try_into().unwrap());
     let consumed = u32::from_le_bytes(record[12..16].try_into().unwrap());
     let exported = u32::from_le_bytes(record[16..20].try_into().unwrap());
+    let batt_soc = u32::from_le_bytes(record[20..24].try_into().unwrap());
 
     PowerSample {
         ts,
         produced,
         consumed,
         exported,
+        batt_soc,
     }
 }

@@ -148,6 +148,8 @@ pub struct PowerDelta {
     pub consumed: f64,
     /// Energy exported during this bucket in kWh
     pub exported: f64,
+    /// Battery state of charge in percent, 0-100
+    pub batt_soc: u32,
 }
 
 /// Convert absolute cumulative samples into per-period deltas.
@@ -242,6 +244,7 @@ fn delta_between(previous: PowerSample, current: PowerSample) -> Option<PowerDel
         produced: checked_energy_delta(previous.produced, current.produced)?,
         consumed: checked_energy_delta(previous.consumed, current.consumed)?,
         exported: checked_energy_delta(previous.exported, current.exported)?,
+        batt_soc: current.batt_soc,
     })
 }
 /// Calculate the energy delta between two values in kWh

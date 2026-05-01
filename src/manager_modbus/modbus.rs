@@ -439,7 +439,7 @@ pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>, mode: ModbusPortMode
 
     loop {
         // Shields the inverter from excessive requests.
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(500));
 
         // Wait for a request
         let envelope = rx.recv()?;

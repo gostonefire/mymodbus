@@ -54,6 +54,7 @@ impl MockSerialPort {
         registers.insert(100, 2300);
         registers.insert(101, 500);
         registers.insert(102, 1200);
+        registers.insert(31038, 78); // battery_soc
 
         let mut msp = Self {
             registers,

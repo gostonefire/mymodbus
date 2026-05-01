@@ -171,8 +171,8 @@ fn history_response_json(
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"ts\":{},\"produced\":{},\"consumed\":{},\"exported\":{}}}",
-            sample.ts, sample.produced, sample.consumed, sample.exported
+            "{{\"ts\":{},\"produced\":{},\"consumed\":{},\"exported\":{},\"batt_soc\":{}}}",
+            sample.ts, sample.produced, sample.consumed, sample.exported, sample.batt_soc
         ));
     }
 

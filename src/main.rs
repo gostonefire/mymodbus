@@ -87,6 +87,7 @@ fn main() -> Result<()> {
         "pv_energy_total".to_string(),
         "load_energy_total".to_string(),
         "feed_in_energy_total".to_string(),
+        "battery_soc".to_string(),
     );
 
     let server_result = run_server(

@@ -28,6 +28,8 @@ pub struct PowerSample {
     pub consumed: u32,
     /// Energy exported in kWh
     pub exported: u32,
+    /// Battery state of charge, in percent
+    pub batt_soc: u32,
 }
 
 /// Spawns a new poller thread
@@ -41,6 +43,7 @@ pub struct PowerSample {
 /// * `produced_id` - register ID for produced energy
 /// * `consumed_id` - register ID for consumed energy
 /// * `exported_id` - register ID for exported energy
+/// * `batt_soc_id` - register ID for battery state of charge
 pub fn spawn_poller(
     tx_request: mpsc::Sender<ModbusRequest>,
     rx_shutdown: mpsc::Receiver<()>,
@@ -49,6 +52,7 @@ pub fn spawn_poller(
     produced_id: String,
     consumed_id: String,
     exported_id: String,
+    batt_soc_id: String,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let interval = Duration::from_secs(60);
@@ -81,6 +85,7 @@ pub fn spawn_poller(
                 &produced_id,
                 &consumed_id,
                 &exported_id,
+                &batt_soc_id,
             ) {
                 Ok(()) => info!("polling cycle completed"),
                 Err(err) => error!("polling cycle failed: {err}"),
@@ -105,6 +110,7 @@ pub fn spawn_poller(
 /// * `produced_id` - register ID for produced energy
 /// * `consumed_id` - register ID for consumed energy
 /// * `exported_id` - register ID for exported energy
+/// * `batt_soc_id` - register ID for battery state of charge
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
@@ -112,12 +118,15 @@ fn poll_once(
     produced_id: &str,
     consumed_id: &str,
     exported_id: &str,
+    batt_soc_id: &str,
 ) -> Result<()> {
     let produced = send_request(tx_request, RegisterRequest::UniqueId(produced_id.to_string()))?
         .to_u32()?;
     let consumed = send_request(tx_request, RegisterRequest::UniqueId(consumed_id.to_string()))?
         .to_u32()?;
     let exported = send_request(tx_request, RegisterRequest::UniqueId(exported_id.to_string()))?
+        .to_u32()?;
+    let batt_soc = send_request(tx_request, RegisterRequest::UniqueId(batt_soc_id.to_string()))?
         .to_u32()?;
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -127,6 +136,7 @@ fn poll_once(
         produced,
         consumed,
         exported,
+        batt_soc,
     };
 
     cache.insert(sample);
