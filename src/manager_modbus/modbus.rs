@@ -44,6 +44,17 @@ impl ModbusRead for u16 {
     }
 }
 
+impl ModbusRead for i16 {
+    const REG_COUNT: u16 = 1;
+
+    fn from_registers(regs: &[u16]) -> Result<Self> {
+        regs.get(0)
+            .copied()
+            .map(|value| value as i16)
+            .ok_or_else(|| anyhow!("not enough registers for i16"))
+    }
+}
+
 impl ModbusRead for u32 {
     const REG_COUNT: u16 = 2;
 
@@ -129,6 +140,7 @@ impl Modbus {
 
         match info.data_type {
             "u16" | "uint16" => Ok(RegisterValue::U16((self.read_register::<u16>(info.address)?, info.scale, info.precision))),
+            "i16" | "int16" => Ok(RegisterValue::I16((self.read_register::<i16>(info.address)?, info.scale, info.precision))),
             "u32" | "uint32" => Ok(RegisterValue::U32((self.read_register::<u32>(info.address)?, info.scale, info.precision))),
             "i32" | "int32" => Ok(RegisterValue::I32((self.read_register::<i32>(info.address)?, info.scale, info.precision))),
             "sum_u16" => {
@@ -276,6 +288,8 @@ impl Modbus {
 pub enum RegisterValue {
     /// A 16-bit unsigned integer
     U16((u16, Option<f64>, Option<u8>)),
+    /// A 16-bit signed integer
+    I16((i16, Option<f64>, Option<u8>)),
     /// A 32-bit unsigned integer (occupies two registers)
     U32((u32, Option<f64>, Option<u8>)),
     /// A 32-bit signed integer (occupies two registers)
@@ -291,6 +305,7 @@ impl RegisterValue {
 
         let (data, scale, precision) = match self {
             RegisterValue::U16((data, scale, precision)) => (*data as f64, scale, precision),
+            RegisterValue::I16((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::U32((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::I32((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::String(_) => return Err(anyhow!("Cannot convert string to f64")),
@@ -313,6 +328,10 @@ impl RegisterValue {
     pub fn to_u32(&self) -> Result<u32> {
         match self {
             RegisterValue::U16((data, _, _)) => Ok(*data as u32),
+            RegisterValue::I16((data, _, _)) => {
+                u32::try_from(*data)
+                    .map_err(|_| anyhow!("Cannot convert negative i16 to u32: {data}"))
+            }
             RegisterValue::U32((data, _, _)) => Ok(*data),
             RegisterValue::I32((data, _, _)) => {
                 u32::try_from(*data)
@@ -479,6 +498,7 @@ pub fn run(port: String, rx: mpsc::Receiver<ModbusRequest>, mode: ModbusPortMode
 
                     let value = match data_type {
                         "u16" | "uint16" => RegisterValue::U16((modbus.read_register::<u16>(address)?, None, None)),
+                        "i16" | "int16" => RegisterValue::I16((modbus.read_register::<i16>(address)?, None, None)),
                         "u32" | "uint32" => RegisterValue::U32((modbus.read_register::<u32>(address)?, None, None)),
                         "i32" | "int32" => RegisterValue::I32((modbus.read_register::<i32>(address)?, None, None)),
                         other => return Err(anyhow!("unsupported data_type: {}", other)),
@@ -554,6 +574,20 @@ mod tests {
         assert_eq!(regs, vec![0x1234]);
         let val = u16::from_registers(&regs).unwrap();
         assert_eq!(val, 0x1234);
+    }
+
+    #[test]
+    fn test_parse_response_i16() {
+        // Slave 247 (0xF7), Func 4, 2 bytes (1 reg), Value -2 (0xFFFE)
+        let mut frame = vec![0xF7, 0x04, 0x02, 0xFF, 0xFE];
+        let crc = modbus_crc16(&frame);
+        frame.push((crc & 0xFF) as u8);
+        frame.push((crc >> 8) as u8);
+
+        let regs = parse_read_holding_response(&frame, 247, 1).unwrap();
+        assert_eq!(regs, vec![0xFFFE]);
+        let val = i16::from_registers(&regs).unwrap();
+        assert_eq!(val, -2);
     }
 
     #[test]
