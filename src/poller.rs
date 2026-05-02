@@ -7,7 +7,7 @@ use log::{error, info};
 use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::history_cache::HistoryCache;
 use crate::latest_cache::LatestCache;
@@ -59,27 +59,33 @@ pub fn spawn_poller(
     batt_soc_id: String,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let interval = Duration::from_secs(60);
-        let mut next_tick = Instant::now();
-
         loop {
-            next_tick += interval;
-            let now = Instant::now();
-
-            if next_tick > now {
-                match rx_shutdown.recv_timeout(next_tick - now) {
-                    Ok(()) => {
-                        info!("poller received shutdown signal");
-                        break;
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        info!("poller shutdown channel disconnected");
-                        break;
-                    }
+            let next_sample_ts = match next_minute_ts() {
+                Ok(ts) => ts,
+                Err(err) => {
+                    error!("failed to calculate next poll timestamp: {err}");
+                    break;
                 }
-            } else {
-                next_tick = Instant::now();
+            };
+
+            let sleep_duration = match duration_until_unix_ts(next_sample_ts) {
+                Ok(duration) => duration,
+                Err(err) => {
+                    error!("failed to calculate poll sleep duration: {err}");
+                    break;
+                }
+            };
+
+            match rx_shutdown.recv_timeout(sleep_duration) {
+                Ok(()) => {
+                    info!("poller received shutdown signal");
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    info!("poller shutdown channel disconnected");
+                    break;
+                }
             }
 
             match poll_once(
@@ -90,6 +96,7 @@ pub fn spawn_poller(
                 &production_id,
                 &consumption_id,
                 &batt_soc_id,
+                next_sample_ts,
             ) {
                 Ok(()) => info!("polling cycle completed"),
                 Err(err) => error!("polling cycle failed: {err}"),
@@ -104,6 +111,24 @@ pub fn spawn_poller(
     })
 }
 
+/// Calculates the Unix timestamp of the start of the next minute
+fn next_minute_ts() -> Result<u64> {
+    let now_ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+    Ok(((now_ts / 60) + 1) * 60)
+}
+
+/// Calculates the duration from now until a given Unix timestamp
+///
+/// # Arguments
+///
+/// * `ts` - target Unix timestamp in seconds
+fn duration_until_unix_ts(ts: u64) -> Result<Duration> {
+    let now_ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+    Ok(Duration::from_secs(ts.saturating_sub(now_ts)))
+}
+
 /// Performs a single polling cycle
 ///
 /// # Arguments
@@ -115,6 +140,7 @@ pub fn spawn_poller(
 /// * `production_id` - register ID for power production
 /// * `consumption_id` - register ID for power consumption
 /// * `batt_soc_id` - register ID for battery state of charge
+/// * `ts` - timestamp for the sample
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
@@ -123,6 +149,7 @@ fn poll_once(
     production_id: &str,
     consumption_id: &str,
     batt_soc_id: &str,
+    ts: u64,
 ) -> Result<()> {
     let production = send_request(tx_request, RegisterRequest::UniqueId(production_id.to_string()))?
         .to_f64()?;
@@ -130,8 +157,6 @@ fn poll_once(
         .to_f64()?;
     let batt_soc = send_request(tx_request, RegisterRequest::UniqueId(batt_soc_id.to_string()))?
         .to_f64()?;
-
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
     let sample = DataSample {
         ts,
@@ -145,6 +170,7 @@ fn poll_once(
 
     latest_cache.insert(batt_soc_id, batt_soc, ts);
     latest_cache.insert(production_id, production, ts);
+    latest_cache.insert(consumption_id, consumption, ts);
 
     for id in LATEST_ONLY_REGISTER_IDS {
         let value = send_request(tx_request, RegisterRequest::UniqueId((*id).to_string()))?

@@ -22,6 +22,7 @@ pub use history::handle_history;
 pub use favicon::handle_favicon;
 pub use empty::handle_empty;
 pub use bad_request::handle_bad_request;
+use crate::poller::DataSample;
 
 /// Formats a JSON response
 ///
@@ -70,6 +71,14 @@ fn http_response(data: anyhow::Result<RegisterValue>) -> String {
     json_response("200 OK", format!("{{\"data\": {}}}", value))
 }
 
+/// Handles historical data queries and returns a JSON response
+///
+/// # Arguments
+///
+/// * `history_cache` - the cache containing historical data
+/// * `from_ts` - start timestamp for the query
+/// * `to_ts` - end timestamp for the query
+/// * `interval` - optional averaging interval in minutes
 pub fn handle_history_query_json(
     history_cache: Arc<HistoryCache>,
     from_ts: u64,
@@ -81,8 +90,62 @@ pub fn handle_history_query_json(
     }
 
     let samples = history_cache.query(from_ts, to_ts);
-    let values = power_average(&samples, Duration::from_secs(interval.unwrap_or(5) * 60));
-    Ok(history_response_json(from_ts, to_ts, false, &values))
+
+    match interval {
+        None | Some(0 | 1) => Ok(history_response_json(from_ts, to_ts, false, &samples)),
+        Some(interval) => {
+            let values = power_average(&samples, Duration::from_secs(interval * 60));
+            Ok(history_response_json(from_ts, to_ts, false, &values))
+        }
+    }
+}
+
+/// Trait for types that can be represented as a historical JSON sample
+trait HistoryJsonSample {
+    /// Returns the timestamp of the sample
+    fn ts(&self) -> u64;
+    /// Returns the power production value
+    fn production(&self) -> f64;
+    /// Returns the power consumption value
+    fn consumption(&self) -> f64;
+    /// Returns the battery state of charge
+    fn batt_soc(&self) -> f64;
+}
+
+impl HistoryJsonSample for DataSample {
+    fn ts(&self) -> u64 {
+        self.ts
+    }
+
+    fn production(&self) -> f64 {
+        self.production
+    }
+
+    fn consumption(&self) -> f64 {
+        self.consumption
+    }
+
+    fn batt_soc(&self) -> f64 {
+        self.batt_soc
+    }
+}
+
+impl HistoryJsonSample for PowerAverage {
+    fn ts(&self) -> u64 {
+        self.ts
+    }
+
+    fn production(&self) -> f64 {
+        self.production
+    }
+
+    fn consumption(&self) -> f64 {
+        self.consumption
+    }
+
+    fn batt_soc(&self) -> f64 {
+        self.batt_soc
+    }
 }
 
 /// Helper function to format historical data as a JSON string
@@ -93,11 +156,11 @@ pub fn handle_history_query_json(
 /// * `to_ts` - end timestamp of the data
 /// * `truncated` - whether the data was truncated
 /// * `samples` - the historical power samples
-fn history_response_json(
+fn history_response_json<T: HistoryJsonSample>(
     from_ts: u64,
     to_ts: u64,
     truncated: bool,
-    samples: &[PowerAverage],
+    samples: &[T],
 ) -> String {
     let mut out = String::new();
 
@@ -113,7 +176,10 @@ fn history_response_json(
         }
         out.push_str(&format!(
             "{{\"ts\":{},\"production\":{},\"consumption\":{},\"batt_soc\":{}}}",
-            sample.ts, sample.production, sample.consumption, sample.batt_soc
+            sample.ts(),
+            sample.production(),
+            sample.consumption(),
+            sample.batt_soc()
         ));
     }
 

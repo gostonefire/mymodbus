@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         latest_cache.clone(),
         persistence.clone(),
         "pv1_power".to_string(),
-        "load_power_revised".to_string(),
+        "load_power".to_string(),
         "battery_soc".to_string(),
     );
 
