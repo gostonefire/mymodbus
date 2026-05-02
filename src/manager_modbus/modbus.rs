@@ -294,6 +294,8 @@ pub enum RegisterValue {
     U32((u32, Option<f64>, Option<u8>)),
     /// A 32-bit signed integer (occupies two registers)
     I32((i32, Option<f64>, Option<u8>)),
+    /// A scaled numeric value already converted to real-world units
+    F64(f64),
     /// A UTF-8 string
     String(String),
 }
@@ -308,6 +310,7 @@ impl RegisterValue {
             RegisterValue::I16((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::U32((data, scale, precision)) => (*data as f64, scale, precision),
             RegisterValue::I32((data, scale, precision)) => (*data as f64, scale, precision),
+            RegisterValue::F64(data) => return Ok(*data),
             RegisterValue::String(_) => return Err(anyhow!("Cannot convert string to f64")),
         };
 
@@ -336,6 +339,14 @@ impl RegisterValue {
             RegisterValue::I32((data, _, _)) => {
                 u32::try_from(*data)
                     .map_err(|_| anyhow!("Cannot convert negative i32 to u32: {data}"))
+            }
+            RegisterValue::F64(data) => {
+                if !data.is_finite() || *data < 0.0 || data.fract() != 0.0 {
+                    return Err(anyhow!("Cannot convert f64 to u32: {data}"));
+                }
+
+                u32::try_from(*data as u64)
+                    .map_err(|_| anyhow!("Cannot convert f64 to u32: {data}"))
             }
             RegisterValue::String(_) => Err(anyhow!("Cannot convert string to u32")),
         }

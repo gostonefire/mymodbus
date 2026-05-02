@@ -13,6 +13,7 @@ use crate::handlers::{
     handle_address, handle_bad_request, handle_empty, handle_favicon, handle_history, handle_id,
 };
 use crate::history_cache::HistoryCache;
+use crate::latest_cache::LatestCache;
 use crate::manager_modbus::ModbusRequest;
 
 
@@ -25,12 +26,14 @@ use crate::manager_modbus::ModbusRequest;
 /// * `tx_request` - channel to send Modbus requests
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `history_cache` - shared history cache for historical data queries
+/// * `latest_cache` - cache for latest-only values populated by the poller
 pub fn run_server(
     bind_address: IpAddr,
     bind_port: u16,
     tx_request: Sender<ModbusRequest>,
     rx_shutdown: Receiver<()>,
     history_cache: Arc<HistoryCache>,
+    latest_cache: Arc<LatestCache>,
 ) -> Result<()> {
     let socket_addr = SocketAddr::new(bind_address, bind_port);
 
@@ -92,7 +95,7 @@ pub fn run_server(
                                 handle_favicon()
                             }
                             Some(path) if path.starts_with("/id/") => {
-                                handle_id(path, &tx_request)
+                                handle_id(path, &tx_request, &latest_cache)
                             }
                             Some(path) if path.starts_with("/address/") => {
                                 handle_address(path, &tx_request)

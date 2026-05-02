@@ -12,6 +12,7 @@ mod poller;
 mod history_cache;
 mod persistence;
 pub mod handlers;
+pub mod latest_cache;
 
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;
@@ -25,6 +26,7 @@ use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::latest_cache::LatestCache;
 use crate::persistence::Persistence;
 
 /// Main entry point of the application
@@ -53,6 +55,7 @@ fn main() -> Result<()> {
         }
     });
 
+    let latest_cache = Arc::new(LatestCache::new());
     let history_cache = Arc::new(HistoryCache::new(
         config.cache.in_memory_hours * 60 * 60,
     ));
@@ -83,6 +86,7 @@ fn main() -> Result<()> {
         tx_request.clone(),
         rx_poller_shutdown,
         history_cache.clone(),
+        latest_cache.clone(),
         persistence.clone(),
         "pv1_power".to_string(),
         "load_power_revised".to_string(),
@@ -95,6 +99,7 @@ fn main() -> Result<()> {
         tx_request.clone(),
         rx_server_shutdown,
         history_cache.clone(),
+        latest_cache.clone(),
     );
 
     let _ = persistence.lock().unwrap().flush();

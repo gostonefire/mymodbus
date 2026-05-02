@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::sync::RwLock;
 use std::time::Duration;
 use log::debug;
-use crate::poller::PowerSample;
+use crate::poller::DataSample;
 
 /// Unix timestamp in seconds
 pub type UnixTs = u64;
@@ -15,7 +15,7 @@ pub type UnixTs = u64;
 ///
 /// Intended for fast range queries over the last 48 hours.
 pub struct HistoryCache {
-    inner: RwLock<VecDeque<PowerSample>>,
+    inner: RwLock<VecDeque<DataSample>>,
     retention_secs: u64,
 }
 
@@ -46,7 +46,7 @@ impl HistoryCache {
     /// # Arguments
     /// 
     /// * `samples` - the power samples to insert
-    pub fn insert_many(&self, mut samples: Vec<PowerSample>) {
+    pub fn insert_many(&self, mut samples: Vec<DataSample>) {
         if samples.is_empty() {
             return;
         }
@@ -67,7 +67,7 @@ impl HistoryCache {
     /// # Arguments
     ///
     /// * `sample` - the power sample to insert
-    pub fn insert(&self, sample: PowerSample) {
+    pub fn insert(&self, sample: DataSample) {
         let mut guard = self.inner.write().unwrap();
         guard.push_back(sample);
         self.prune_locked(&mut guard, sample.ts);
@@ -80,7 +80,7 @@ impl HistoryCache {
     ///
     /// * `from_ts` - the start of the range (inclusive)
     /// * `to_ts` - the end of the range (inclusive)
-    pub fn query(&self, from_ts: UnixTs, to_ts: UnixTs) -> Vec<PowerSample> {
+    pub fn query(&self, from_ts: UnixTs, to_ts: UnixTs) -> Vec<DataSample> {
         if from_ts > to_ts {
             return Vec::new();
         }
@@ -99,7 +99,7 @@ impl HistoryCache {
     ///
     /// * `queue` - the queue to prune
     /// * `now_ts` - the current timestamp in seconds
-    fn prune_locked(&self, queue: &mut VecDeque<PowerSample>, now_ts: u64) {
+    fn prune_locked(&self, queue: &mut VecDeque<DataSample>, now_ts: u64) {
         let cutoff = now_ts.saturating_sub(self.retention_secs);
 
         while let Some(front) = queue.front() {
@@ -142,7 +142,7 @@ pub struct PowerAverage {
 ///
 /// * `samples` - the power samples to process
 /// * `bucket_size` - the duration of each time bucket, e.g. 5 minutes or 1 hour
-pub fn power_average(samples: &[PowerSample], bucket_size: Duration) -> Vec<PowerAverage> {
+pub fn power_average(samples: &[DataSample], bucket_size: Duration) -> Vec<PowerAverage> {
     let bucket_secs = bucket_size.as_secs();
 
     if samples.is_empty() || bucket_secs == 0 {

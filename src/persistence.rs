@@ -24,7 +24,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::poller::PowerSample;
+use crate::poller::DataSample;
 
 const FILE_MAGIC: &[u8; 8] = b"MYMODB01";
 const RECORD_SIZE: usize = 32;
@@ -80,7 +80,7 @@ impl Persistence {
     /// # Arguments
     ///
     /// * `sample` - the power sample to persist
-    pub fn append(&mut self, sample: PowerSample) -> Result<()> {
+    pub fn append(&mut self, sample: DataSample) -> Result<()> {
         self.ensure_current_file()?;
 
         if self.current_file_sample_count >= self.max_samples_per_file {
@@ -152,7 +152,7 @@ impl Persistence {
     /// # Arguments
     ///
     /// * `cutoff_ts` - the Unix timestamp (in seconds) to load samples from
-    pub fn load_since(&self, cutoff_ts: u64) -> Result<Vec<PowerSample>> {
+    pub fn load_since(&self, cutoff_ts: u64) -> Result<Vec<DataSample>> {
         let mut samples = Vec::new();
 
         for file in self.persistence_files()? {
@@ -278,7 +278,7 @@ fn is_persistence_file(path: &Path) -> bool {
 ///
 /// * `writer` - the writer to write to
 /// * `sample` - the sample to encode and write
-fn write_sample<W: Write>(writer: &mut W, sample: PowerSample) -> Result<()> {
+fn write_sample<W: Write>(writer: &mut W, sample: DataSample) -> Result<()> {
     writer.write_all(&sample.ts.to_le_bytes())?;
     writer.write_all(&sample.production.to_le_bytes())?;
     writer.write_all(&sample.consumption.to_le_bytes())?;
@@ -291,7 +291,7 @@ fn write_sample<W: Write>(writer: &mut W, sample: PowerSample) -> Result<()> {
 /// # Arguments
 ///
 /// * `path` - the path to the persistence file
-fn read_samples_from_file(path: &Path) -> Result<Vec<PowerSample>> {
+fn read_samples_from_file(path: &Path) -> Result<Vec<DataSample>> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
@@ -329,13 +329,13 @@ fn read_samples_from_file(path: &Path) -> Result<Vec<PowerSample>> {
 /// # Arguments
 ///
 /// * `record` - the 20-byte record to decode
-fn decode_sample(record: &[u8; RECORD_SIZE]) -> PowerSample {
+fn decode_sample(record: &[u8; RECORD_SIZE]) -> DataSample {
     let ts = u64::from_le_bytes(record[0..8].try_into().unwrap());
     let production = f64::from_le_bytes(record[8..16].try_into().unwrap());
     let consumption = f64::from_le_bytes(record[16..24].try_into().unwrap());
     let batt_soc = f64::from_le_bytes(record[24..32].try_into().unwrap());
 
-    PowerSample {
+    DataSample {
         ts,
         production,
         consumption,

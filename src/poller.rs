@@ -10,15 +10,22 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::history_cache::HistoryCache;
+use crate::latest_cache::LatestCache;
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest};
 use crate::persistence::Persistence;
 
-/// A snapshot of power metrics at a specific point in time.
+const LATEST_ONLY_REGISTER_IDS: &[&str] = &[
+    "battery_soh",
+    "feed_in_energy_today",
+    "grid_consumption_energy_today",
+];
+
+/// A snapshot of some metrics at a specific point in time.
 ///
 /// Power values are stored in their scaled real-world units, normally kW.
 /// Battery SoC is stored as percent.
 #[derive(Copy, Clone)]
-pub struct PowerSample {
+pub struct DataSample {
     /// Unix timestamp in seconds
     pub ts: u64,
     /// Power production in kW
@@ -36,6 +43,7 @@ pub struct PowerSample {
 /// * `tx_request` - channel to send Modbus requests
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `cache` - shared history cache to store samples
+/// * `latest_cache` - cache for latest-only values populated by the poller
 /// * `persistence` - shared persistence to store samples
 /// * `production_id` - register ID for power production
 /// * `consumption_id` - register ID for power consumption
@@ -44,6 +52,7 @@ pub fn spawn_poller(
     tx_request: mpsc::Sender<ModbusRequest>,
     rx_shutdown: mpsc::Receiver<()>,
     cache: Arc<HistoryCache>,
+    latest_cache: Arc<LatestCache>,
     persistence: Arc<Mutex<Persistence>>,
     production_id: String,
     consumption_id: String,
@@ -76,6 +85,7 @@ pub fn spawn_poller(
             match poll_once(
                 &tx_request,
                 &cache,
+                &latest_cache,
                 &persistence,
                 &production_id,
                 &consumption_id,
@@ -100,6 +110,7 @@ pub fn spawn_poller(
 ///
 /// * `tx_request` - channel to send Modbus requests
 /// * `cache` - history cache to store the result
+/// * `latest_cache` - cache for latest-only values populated by the poller
 /// * `persistence` - persistence to store the result
 /// * `production_id` - register ID for power production
 /// * `consumption_id` - register ID for power consumption
@@ -107,6 +118,7 @@ pub fn spawn_poller(
 fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
+    latest_cache: &LatestCache,
     persistence: &Arc<Mutex<Persistence>>,
     production_id: &str,
     consumption_id: &str,
@@ -121,7 +133,7 @@ fn poll_once(
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let sample = PowerSample {
+    let sample = DataSample {
         ts,
         production,
         consumption,
@@ -130,6 +142,15 @@ fn poll_once(
 
     cache.insert(sample);
     persistence.lock().unwrap().append(sample)?;
+
+    latest_cache.insert(batt_soc_id, batt_soc, ts);
+    latest_cache.insert(production_id, production, ts);
+
+    for id in LATEST_ONLY_REGISTER_IDS {
+        let value = send_request(tx_request, RegisterRequest::UniqueId((*id).to_string()))?
+            .to_f64()?;
+        latest_cache.insert(*id, value, ts);
+    }
 
     Ok(())
 }
