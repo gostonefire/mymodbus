@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Metadata for a specific Modbus register
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RegisterInfo {
     /// Friendly name for display
