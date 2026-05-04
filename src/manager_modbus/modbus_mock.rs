@@ -74,7 +74,7 @@ impl MockSerialPort {
 
         msp.set_u32(32000, 20000); // pv_energy_total
         msp.set_u32(32009, 10000); // feed_in_energy_total
-        msp.set_u32(32021, 30000); // load_energy_total
+        msp.set_u32(32012, 30000); // grid_consumption_energy_total
         msp
     }
 

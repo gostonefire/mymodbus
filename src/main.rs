@@ -13,6 +13,7 @@ mod history_cache;
 mod persistence;
 pub mod handlers;
 pub mod latest_cache;
+pub mod energy_interval_cache;
 
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;
@@ -28,6 +29,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::latest_cache::LatestCache;
 use crate::persistence::Persistence;
+use crate::energy_interval_cache::EnergyIntervalCache;
 
 /// Main entry point of the application
 ///
@@ -56,6 +58,7 @@ fn main() -> Result<()> {
     });
 
     let latest_cache = Arc::new(LatestCache::new());
+    let energy_interval_cache = Arc::new(EnergyIntervalCache::new());
     let history_cache = Arc::new(HistoryCache::new(
         config.cache.in_memory_hours * 60 * 60,
     ));
@@ -87,6 +90,7 @@ fn main() -> Result<()> {
         rx_poller_shutdown,
         history_cache.clone(),
         latest_cache.clone(),
+        energy_interval_cache.clone(),
         persistence.clone(),
         "pv1_power".to_string(),
         "load_power".to_string(),
@@ -100,6 +104,7 @@ fn main() -> Result<()> {
         rx_server_shutdown,
         history_cache.clone(),
         latest_cache.clone(),
+        energy_interval_cache.clone(),
     );
 
     let _ = persistence.lock().unwrap().flush();

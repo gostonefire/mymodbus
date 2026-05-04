@@ -11,14 +11,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::history_cache::HistoryCache;
 use crate::latest_cache::LatestCache;
+use crate::energy_interval_cache::{EnergyIntervalCache, EnergyTotalSample};
 use crate::manager_modbus::{send_request, ModbusRequest, RegisterRequest};
 use crate::persistence::Persistence;
 
 const LATEST_ONLY_REGISTER_IDS: &[&str] = &[
     "battery_soh",
-    "feed_in_energy_today",
-    "grid_consumption_energy_today",
 ];
+
+const FEED_IN_ENERGY_TOTAL_ID: &str = "feed_in_energy_total";
+const GRID_CONSUMPTION_ENERGY_TOTAL_ID: &str = "grid_consumption_energy_total";
+const FIFTEEN_MINUTES_SECS: u64 = 15 * 60;
 
 /// A snapshot of some metrics at a specific point in time.
 ///
@@ -44,6 +47,7 @@ pub struct DataSample {
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `cache` - shared history cache to store samples
 /// * `latest_cache` - cache for latest-only values populated by the poller
+/// * `energy_interval_cache` - cache for energy intervals values populated by the poller
 /// * `persistence` - shared persistence to store samples
 /// * `production_id` - register ID for power production
 /// * `consumption_id` - register ID for power consumption
@@ -53,6 +57,7 @@ pub fn spawn_poller(
     rx_shutdown: mpsc::Receiver<()>,
     cache: Arc<HistoryCache>,
     latest_cache: Arc<LatestCache>,
+    energy_interval_cache: Arc<EnergyIntervalCache>,
     persistence: Arc<Mutex<Persistence>>,
     production_id: String,
     consumption_id: String,
@@ -92,6 +97,7 @@ pub fn spawn_poller(
                 &tx_request,
                 &cache,
                 &latest_cache,
+                &energy_interval_cache,
                 &persistence,
                 &production_id,
                 &consumption_id,
@@ -136,6 +142,7 @@ fn duration_until_unix_ts(ts: u64) -> Result<Duration> {
 /// * `tx_request` - channel to send Modbus requests
 /// * `cache` - history cache to store the result
 /// * `latest_cache` - cache for latest-only values populated by the poller
+/// * `energy_interval_cache` - cache for energy intervals values populated by the poller
 /// * `persistence` - persistence to store the result
 /// * `production_id` - register ID for power production
 /// * `consumption_id` - register ID for power consumption
@@ -145,6 +152,7 @@ fn poll_once(
     tx_request: &mpsc::Sender<ModbusRequest>,
     cache: &HistoryCache,
     latest_cache: &LatestCache,
+    energy_interval_cache: &EnergyIntervalCache,
     persistence: &Arc<Mutex<Persistence>>,
     production_id: &str,
     consumption_id: &str,
@@ -177,6 +185,66 @@ fn poll_once(
             .to_f64()?;
         latest_cache.insert(*id, value, ts);
     }
+
+    if ts % FIFTEEN_MINUTES_SECS == 0 {
+        poll_energy_totals_once(tx_request, latest_cache, energy_interval_cache, ts)?;
+    }
+    
+    Ok(())
+}
+
+/// Polls energy total values once and updates caches
+///
+/// # Arguments
+///
+/// * `tx_request` - channel to send Modbus requests
+/// * `latest_cache` - cache for latest values populated by the poller
+/// * `energy_interval_cache` - cache for energy intervals values populated by the poller
+/// * `ts` - timestamp for the sample
+fn poll_energy_totals_once(
+    tx_request: &mpsc::Sender<ModbusRequest>,
+    latest_cache: &LatestCache,
+    energy_interval_cache: &EnergyIntervalCache,
+    ts: u64,
+) -> Result<()> {
+    let feed_in_energy_total = match send_request(
+        tx_request,
+        RegisterRequest::UniqueId(FEED_IN_ENERGY_TOTAL_ID.to_string()),
+    )
+        .and_then(|value| value.to_f64())
+    {
+        Ok(value) => value,
+        Err(err) => {
+            energy_interval_cache.clear();
+            return Err(err);
+        }
+    };
+
+    let grid_consumption_energy_total = match send_request(
+        tx_request,
+        RegisterRequest::UniqueId(GRID_CONSUMPTION_ENERGY_TOTAL_ID.to_string()),
+    )
+        .and_then(|value| value.to_f64())
+    {
+        Ok(value) => value,
+        Err(err) => {
+            energy_interval_cache.clear();
+            return Err(err);
+        }
+    };
+
+    latest_cache.insert(FEED_IN_ENERGY_TOTAL_ID, feed_in_energy_total, ts);
+    latest_cache.insert(
+        GRID_CONSUMPTION_ENERGY_TOTAL_ID,
+        grid_consumption_energy_total,
+        ts,
+    );
+
+    energy_interval_cache.insert(EnergyTotalSample {
+        ts,
+        feed_in_energy_total,
+        grid_consumption_energy_total,
+    });
 
     Ok(())
 }

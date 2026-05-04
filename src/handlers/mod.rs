@@ -15,6 +15,7 @@ pub mod history;
 pub mod favicon;
 pub mod empty;
 pub mod bad_request;
+pub mod energy_intervals;
 
 pub use id::handle_id;
 pub use address::handle_address;

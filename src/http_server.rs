@@ -14,6 +14,8 @@ use crate::handlers::{
 };
 use crate::history_cache::HistoryCache;
 use crate::latest_cache::LatestCache;
+use crate::energy_interval_cache::EnergyIntervalCache;
+use crate::handlers::energy_intervals::handle_energy_intervals;
 use crate::manager_modbus::ModbusRequest;
 
 
@@ -27,6 +29,7 @@ use crate::manager_modbus::ModbusRequest;
 /// * `rx_shutdown` - channel to receive shutdown signal
 /// * `history_cache` - shared history cache for historical data queries
 /// * `latest_cache` - cache for latest-only values populated by the poller
+/// * `energy_interval_cache` - cache for energy interval values populated by the poller
 pub fn run_server(
     bind_address: IpAddr,
     bind_port: u16,
@@ -34,6 +37,7 @@ pub fn run_server(
     rx_shutdown: Receiver<()>,
     history_cache: Arc<HistoryCache>,
     latest_cache: Arc<LatestCache>,
+    energy_interval_cache: Arc<EnergyIntervalCache>,
 ) -> Result<()> {
     let socket_addr = SocketAddr::new(bind_address, bind_port);
 
@@ -102,6 +106,9 @@ pub fn run_server(
                             }
                             Some(path) if path.starts_with("/history") => {
                                 handle_history(path, history_cache.clone())
+                            }
+                            Some(path) if path.starts_with("/energy-intervals") => {
+                                handle_energy_intervals(path, energy_interval_cache.clone())
                             }
                             _ => Err(anyhow!("unsupported request")),
                         };
