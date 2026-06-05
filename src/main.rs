@@ -14,6 +14,7 @@ mod persistence;
 pub mod handlers;
 pub mod latest_cache;
 pub mod energy_interval_cache;
+pub mod cleanup;
 
 use crate::http_server::run_server;
 use crate::history_cache::HistoryCache;
@@ -27,6 +28,7 @@ use std::sync::{mpsc, Mutex};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::cleanup::spawn_cleanup_worker;
 use crate::latest_cache::LatestCache;
 use crate::persistence::Persistence;
 use crate::energy_interval_cache::EnergyIntervalCache;
@@ -41,6 +43,7 @@ fn main() -> Result<()> {
     let (tx_os_shutdown, rx_os_shutdown) = mpsc::channel::<()>();
     let (tx_server_shutdown, rx_server_shutdown) = mpsc::channel::<()>();
     let (tx_poller_shutdown, rx_poller_shutdown) = mpsc::channel::<()>();
+    let (tx_cleanup_shutdown, rx_cleanup_shutdown) = mpsc::channel::<()>();
 
     let shutdown_handle = spawn_shutdown_listener(tx_os_shutdown)?;
 
@@ -48,6 +51,7 @@ fn main() -> Result<()> {
         if rx_os_shutdown.recv().is_ok() {
             let _ = tx_server_shutdown.send(());
             let _ = tx_poller_shutdown.send(());
+            let _ = tx_cleanup_shutdown.send(());
         }
     });
 
@@ -85,6 +89,11 @@ fn main() -> Result<()> {
         }
     }
 
+    let cleanup_handle = spawn_cleanup_worker(
+        persistence.clone(),
+        rx_cleanup_shutdown,
+    );
+
     let poller_handle = spawn_poller(
         tx_request.clone(),
         rx_poller_shutdown,
@@ -107,6 +116,7 @@ fn main() -> Result<()> {
         energy_interval_cache.clone(),
     );
 
+    let _ = cleanup_handle.join();
     let _ = persistence.lock().unwrap().flush();
     let _ = send_exit(&tx_request);
     let _ = modbus_handle.join();
