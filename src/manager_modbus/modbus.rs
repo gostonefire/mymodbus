@@ -152,6 +152,15 @@ impl Modbus {
 
                 Ok(RegisterValue::U32((sum, info.scale, info.precision)))
             }
+            "sum_i16" => {
+                let count = info.count.ok_or_else(|| anyhow!("sum_i16 type requires count field"))?;
+                let regs = self.read_registers(info.address, count)?;
+                let sum = regs
+                    .iter()
+                    .fold(0i32, |acc, value| acc + (*value as i16) as i32);
+
+                Ok(RegisterValue::I32((sum, info.scale, info.precision)))
+            }
 
             "string" => {
                 let count = info.count.ok_or_else(|| anyhow!("string type requires count field"))?;
