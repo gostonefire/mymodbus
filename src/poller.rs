@@ -17,6 +17,7 @@ use crate::persistence::Persistence;
 
 const LATEST_ONLY_REGISTER_IDS: &[&str] = &[
     "battery_soh",
+    "grid_power",
 ];
 
 const FEED_IN_ENERGY_TOTAL_ID: &str = "feed_in_energy_total";
